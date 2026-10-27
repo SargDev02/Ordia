@@ -1,7 +1,8 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FinancialAccount, FinancialCategory } from '../types/finance'
+import { MemoryRouter } from 'react-router-dom'
+import type { FinancialAccount, FinancialCategory, FixedExpensePeriod } from '../types/finance'
 import { HomePage } from './HomePage'
 
 const mocks = vi.hoisted(() => ({
@@ -16,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   finance: {
     accounts: [] as FinancialAccount[],
     categories: [] as FinancialCategory[],
+    fixedExpensePeriods: [] as FixedExpensePeriod[],
+    fixedExpenses: [],
+    fixedExpenseVersions: [],
     error: '',
     isLoading: false,
     realtimeStatus: 'connected' as const,
@@ -25,6 +29,10 @@ const mocks = vi.hoisted(() => ({
   createCategory: vi.fn(),
   renameCategory: vi.fn(),
 }))
+
+function renderHome() {
+  return render(<MemoryRouter><HomePage /></MemoryRouter>)
+}
 
 vi.mock('../auth/useAuth', () => ({
   useAuth: () => ({
@@ -47,6 +55,11 @@ vi.mock('../finance/useFinance', () => ({
     updateAccount: mocks.updateAccount,
     updateTransaction: mocks.updateTransaction,
   }),
+}))
+
+vi.mock('../finance/calculations', async () => ({
+  ...await vi.importActual<typeof import('../finance/calculations')>('../finance/calculations'),
+  getBogotaToday: () => '2026-10-26',
 }))
 
 function account(id: string, name: string): FinancialAccount {
@@ -75,13 +88,14 @@ describe('acciones financieras rápidas', () => {
     mocks.finance.error = ''
     mocks.finance.isLoading = false
     mocks.finance.transactions = []
+    mocks.finance.fixedExpensePeriods = []
     mocks.createTransaction.mockResolvedValue(undefined)
     mocks.createCategory.mockResolvedValue(undefined)
   })
 
   it('abre un ingreso preseleccionado y devuelve el foco al cerrar', async () => {
     const user = userEvent.setup()
-    render(<HomePage />)
+    renderHome()
     const opener = screen.getByRole('button', { name: 'Registrar ingreso' })
 
     await user.click(opener)
@@ -97,7 +111,7 @@ describe('acciones financieras rápidas', () => {
   it('conserva el formulario cuando se cancela el descarte de cambios', async () => {
     const user = userEvent.setup()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    render(<HomePage />)
+    renderHome()
 
     await user.click(screen.getByRole('button', { name: 'Registrar gasto' }))
     const dialog = screen.getByRole('dialog', { name: 'Registrar gasto' })
@@ -115,7 +129,7 @@ describe('acciones financieras rápidas', () => {
   it('explica que una transferencia necesita dos cuentas y facilita crear otra', async () => {
     const user = userEvent.setup()
     mocks.finance.accounts = [account('account-a', 'Principal')]
-    render(<HomePage />)
+    renderHome()
 
     await user.click(screen.getByRole('button', { name: 'Transferir' }))
     const unavailable = screen.getByRole('dialog', { name: 'Operación no disponible' })
@@ -128,7 +142,7 @@ describe('acciones financieras rápidas', () => {
 
   it('muestra validación dentro del formulario y lo cierra después de guardar', async () => {
     const user = userEvent.setup()
-    render(<HomePage />)
+    renderHome()
 
     await user.click(screen.getByRole('button', { name: 'Registrar ingreso' }))
     const dialog = screen.getByRole('dialog', { name: 'Registrar ingreso' })
@@ -148,7 +162,7 @@ describe('acciones financieras rápidas', () => {
 
   it('trata una selección vacía como ninguna cuenta y permite volver a todas', async () => {
     const user = userEvent.setup()
-    render(<HomePage />)
+    renderHome()
     await user.click(screen.getByRole('button', { name: 'Limpiar' }))
     expect(screen.getByText('No hay cuentas seleccionadas')).toBeInTheDocument()
     expect(screen.getAllByText('Ninguna cuenta seleccionada')).toHaveLength(2)
@@ -158,7 +172,7 @@ describe('acciones financieras rápidas', () => {
 
   it('abre la administración y crea una subcategoría del tipo elegido', async () => {
     const user = userEvent.setup()
-    render(<HomePage />)
+    renderHome()
     await user.click(screen.getByRole('button', { name: 'Administrar categorías' }))
     const dialog = screen.getByRole('dialog', { name: 'Administrar categorías' })
     await user.selectOptions(within(dialog).getByLabelText('Nivel'), 'expense-category')
@@ -169,5 +183,26 @@ describe('acciones financieras rápidas', () => {
       name: 'Restaurantes',
       parent_id: 'expense-category',
     }))
+  })
+
+  it('no descuenta obligaciones pendientes del saldo ni de gastos realizados', () => {
+    const pendingPeriod: FixedExpensePeriod = {
+      cancellation_reason: null, cancelled_at: null, category_id: 'expense-category', created_at: '', currency: 'COP',
+      due_date: '2026-10-30', expected_amount: 90000, fixed_expense_id: 'fixed-a', id: 'period-a',
+      paid_account_id: null, paid_category_id: null, paid_amount: null, paid_at: null, paid_on: null,
+      payment_request_id: null, suggested_account_id: 'account-a', transaction_id: null, updated_at: '', user_id: 'user-a', version_id: 'version-a',
+    }
+    mocks.finance.fixedExpensePeriods = [pendingPeriod, { ...pendingPeriod, due_date: '2026-11-30', id: 'period-b' }]
+    renderHome()
+    const balance = screen.getByText('Saldo total').closest('article') as HTMLElement
+    const expenses = screen.getByText('Gastos del período').closest('article') as HTMLElement
+    expect(balance).toHaveTextContent('$ 0')
+    expect(expenses).toHaveTextContent('$ 0')
+    const obligations = screen.getByLabelText('Obligaciones del mes')
+    expect(obligations).toHaveTextContent('Pendientes del mes · 1')
+    expect(obligations).toHaveTextContent('90.000')
+    expect(obligations).toHaveTextContent('Vencidos · 0')
+    expect(obligations).toHaveTextContent('Los meses futuros se consultan en el detalle')
+    expect(mocks.createTransaction).not.toHaveBeenCalled()
   })
 })

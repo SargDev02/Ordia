@@ -7,13 +7,20 @@ import {
   createAccount as createAccountRequest,
   createCategory as createCategoryRequest,
   createTransaction as createTransactionRequest,
+  createFixedExpense as createFixedExpenseRequest,
   deleteTransaction as deleteTransactionRequest,
   fetchFinanceData,
+  pauseFixedExpense as pauseFixedExpenseRequest,
+  payFixedExpensePeriod as payFixedExpensePeriodRequest,
+  reactivateFixedExpense as reactivateFixedExpenseRequest,
+  removeFixedExpense as removeFixedExpenseRequest,
   renameCategory as renameCategoryRequest,
   updateAccount as updateAccountRequest,
   updateTransaction as updateTransactionRequest,
+  updateFixedExpense as updateFixedExpenseRequest,
+  undoFixedExpensePayment as undoFixedExpensePaymentRequest,
 } from '../services/finance'
-import type { FinancialAccount, FinancialCategory, FinancialTransaction } from '../types/finance'
+import type { FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpensePeriod, FixedExpenseVersion } from '../types/finance'
 import { FinanceContext, type FinanceContextValue, type RealtimeStatus } from './finance-context'
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
@@ -22,6 +29,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<FinancialAccount[]>([])
   const [categories, setCategories] = useState<FinancialCategory[]>([])
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([])
+  const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([])
+  const [fixedExpensePeriods, setFixedExpensePeriods] = useState<FixedExpensePeriod[]>([])
+  const [fixedExpenseVersions, setFixedExpenseVersions] = useState<FixedExpenseVersion[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
@@ -38,6 +48,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       setAccounts(data.accounts)
       setCategories(data.categories)
       setTransactions(data.transactions)
+      setFixedExpenses(data.fixedExpenses)
+      setFixedExpensePeriods(data.fixedExpensePeriods)
+      setFixedExpenseVersions(data.fixedExpenseVersions)
       setError('')
     } catch (caught) {
       if (sequence !== loadSequence.current) return
@@ -69,6 +82,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'financial_categories', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'financial_transactions', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'financial_transactions', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fixed_expenses', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expenses', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fixed_expense_versions', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expense_versions', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fixed_expense_periods', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expense_periods', filter }, scheduleRefresh)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('connected')
@@ -94,6 +113,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const value = useMemo<FinanceContextValue>(() => ({
     accounts,
     categories,
+    fixedExpenses,
+    fixedExpensePeriods,
+    fixedExpenseVersions,
     error,
     isLoading,
     realtimeStatus,
@@ -106,9 +128,16 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     renameCategory: (categoryId, name) => runAndRefresh(() => renameCategoryRequest(categoryId, name)),
     archiveCategory: (categoryId) => runAndRefresh(() => archiveCategoryRequest(categoryId)),
     createTransaction: (requestId, input) => runAndRefresh(() => createTransactionRequest(requestId, input)),
+    createFixedExpense: (requestId, input) => runAndRefresh(() => createFixedExpenseRequest(requestId, input)),
+    updateFixedExpense: (fixedExpenseId, input) => runAndRefresh(() => updateFixedExpenseRequest(fixedExpenseId, input)),
+    pauseFixedExpense: (fixedExpenseId) => runAndRefresh(() => pauseFixedExpenseRequest(fixedExpenseId)),
+    reactivateFixedExpense: (fixedExpenseId, nextDueDate) => runAndRefresh(() => reactivateFixedExpenseRequest(fixedExpenseId, nextDueDate)),
+    removeFixedExpense: (fixedExpenseId) => runAndRefresh(() => removeFixedExpenseRequest(fixedExpenseId)),
+    payFixedExpensePeriod: (periodId, requestId, input) => runAndRefresh(() => payFixedExpensePeriodRequest(periodId, requestId, input)),
+    undoFixedExpensePayment: (periodId) => runAndRefresh(() => undoFixedExpensePaymentRequest(periodId)),
     updateTransaction: (transactionId, input) => runAndRefresh(() => updateTransactionRequest(transactionId, input)),
     deleteTransaction: (transactionId) => runAndRefresh(() => deleteTransactionRequest(transactionId)),
-  }), [accounts, categories, error, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId])
+  }), [accounts, categories, error, fixedExpensePeriods, fixedExpenseVersions, fixedExpenses, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId])
 
   return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>
 }

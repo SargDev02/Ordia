@@ -43,7 +43,15 @@ export function AppRoutes() {
           path="/"
           element={(
             <Suspense fallback={<LoadingScreen />}>
-              <FinancePage key={session?.user.id} />
+              <FinancePage key={session?.user.id} view="home" />
+            </Suspense>
+          )}
+        />
+        <Route
+          path="/gastos-fijos"
+          element={(
+            <Suspense fallback={<LoadingScreen />}>
+              <FinancePage key={session?.user.id} view="fixed-expenses" />
             </Suspense>
           )}
         />
