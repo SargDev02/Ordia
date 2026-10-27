@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "push:generate-keys": "node scripts/generate-vapid-keys.mjs",
     "test": "vitest run",
     "supabase:start": "supabase start",
     "supabase:reset": "supabase db reset",

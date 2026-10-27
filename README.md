@@ -2,7 +2,7 @@
 
 **Tu tiempo y tu dinero, en orden.**
 
-Aplicación web personal y adaptable para organizar tiempo y finanzas. La etapa 4A incorpora gastos fijos mensuales o anuales, obligaciones por período y registro atómico de pagos sobre la base financiera existente. Las notificaciones siguen fuera de alcance.
+Aplicación web personal y adaptable para organizar tiempo y finanzas. La etapa 4B incorpora la infraestructura Web Push por dispositivo y una versión HTTPS de prueba en Vercel, conservando el registro atómico de pagos y la privacidad de cada usuario.
 
 ## Tecnologías
 
@@ -10,9 +10,11 @@ Aplicación web personal y adaptable para organizar tiempo y finanzas. La etapa 
 - pnpm y Tailwind CSS 4
 - React Router
 - Supabase Auth, Database y Realtime con `@supabase/supabase-js`
+- Service Worker, Push API y Notifications API
+- Supabase Edge Functions, Vault y Cron para el procesamiento en servidor
 - Supabase CLI y migraciones SQL versionadas
 - Vitest, Testing Library y pgTAP
-- Manifest web básico como preparación para una futura PWA
+- Manifest y service worker para instalar Ordia como PWA
 
 ## Requisitos
 
@@ -33,9 +35,10 @@ Configura `.env.local` solo con los valores públicos de Ordia:
 ```dotenv
 VITE_SUPABASE_URL=https://dedtyhomynsmvatfnshs.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+VITE_VAPID_PUBLIC_KEY=clave_publica_vapid
 ```
 
-La clave publicable se obtiene en **Supabase Dashboard → Project Settings → API Keys** o en el diálogo **Connect**. Nunca uses una clave `sb_secret_`, `service_role` ni otro secreto del servidor en una variable `VITE_`.
+La clave publicable se obtiene en **Supabase Dashboard → Project Settings → API Keys** o en el diálogo **Connect**. La clave pública VAPID es segura para el navegador. Nunca uses una clave `sb_secret_`, `service_role`, la clave privada VAPID ni el secreto del cron en una variable `VITE_`.
 
 Inicia la aplicación:
 
@@ -66,6 +69,8 @@ El modelo se construye con estas migraciones versionadas:
 - `supabase/migrations/20261026220000_add_financial_categories.sql`
 - `supabase/migrations/20261026230000_add_recurring_fixed_expenses.sql`
 - `supabase/migrations/20261026234754_fix_fixed_expense_function_lint.sql`
+- `supabase/migrations/20261027001830_add_push_notifications.sql`
+- `supabase/migrations/20261027002318_harden_push_subscription_rpcs.sql`
 
 - `financial_accounts` conserva nombre, tipo, COP, saldo inicial y fecha de archivo.
 - `financial_transactions` representa un ingreso, gasto o transferencia completa. Una transferencia usa una sola fila con origen y destino; por ello se crea, edita o elimina atómicamente y no entra en los totales de ingresos o gastos.
@@ -120,6 +125,83 @@ Estos criterios se mantienen para gastos pausados o dados de baja: sus obligacio
 
 Pagar una obligación crea un gasto financiero normal y vincula ambas filas en una sola RPC transaccional. El importe y la fecha reales pueden diferir de lo previsto. `payment_request_id`, el bloqueo del período y las restricciones únicas evitan pagos duplicados. Ese gasto aparece una sola vez en movimientos, saldos, filtros y reportes; desde la lista general se identifica como **Gasto fijo** y se dirige al flujo especializado. **Deshacer pago** elimina lógicamente el movimiento y devuelve la obligación a pendiente en la misma operación. No hay pagos parciales en esta etapa.
 
+## Notificaciones Web Push
+
+Cada usuario puede habilitar varios dispositivos. `push_subscriptions` guarda una fila privada por navegador y `push_notification_attempts` registra los intentos del servidor. RLS permite consultar únicamente los dispositivos propios; las operaciones privilegiadas de entrega están reservadas a `service_role`. Cuando un mismo endpoint se registra para otra cuenta, la fila anterior se desactiva para proteger dispositivos compartidos.
+
+El permiso se solicita únicamente después de pulsar **Activar notificaciones**. La interfaz distingue activadas, desactivadas, permiso denegado, dispositivo no compatible, instalación requerida en iPhone/iPad y configuración VAPID pendiente. Al cerrar sesión se intenta desactivar la fila remota y siempre se cancela la suscripción del proveedor en el navegador; si la red falla, el endpoint queda inválido y el servidor lo desactiva al recibir `404` o `410`.
+
+El service worker muestra textos discretos sin nombre, importe ni identificadores visibles, y al pulsar abre `/gastos-fijos`. Las obligaciones pendientes no cambian saldos por consultar o notificar. Antes de cada envío el servidor vuelve a comprobar que el período siga impago, no esté cancelado y que la suscripción continúe activa.
+
+La política de Bogotá es:
+
+- un aviso un día antes;
+- un aviso el día del vencimiento;
+- como máximo un intento diario mientras continúe vencido.
+
+La hora objetivo es **08:00 America/Bogota**. El job se ejecuta cada hora y la función acepta procesamiento entre 08:00 y 20:00 para recuperar una ejecución perdida durante el mismo día. No reconstruye avisos antiguos del día anterior: una deuda seguirá entrando en el recordatorio diario de vencidos. La restricción única por dispositivo, obligación, fecha y tipo, junto con una reserva de procesamiento, limita duplicados por reintentos o ejecuciones simultáneas; Web Push no garantiza entrega exactamente una vez.
+
+### Configuración del servidor push
+
+Esta configuración contiene secretos y debe hacerse localmente o en el Dashboard, nunca en Git ni en chats. El generador escribe directamente en archivos ignorados y no imprime las claves.
+
+1. En una instalación nueva, genera el par VAPID, un secreto aleatorio para Cron y el SQL temporal de Vault:
+
+   ```powershell
+   pnpm push:generate-keys
+   ```
+
+   El comando crea `VITE_VAPID_PUBLIC_KEY` en `.env.local`, guarda los cuatro secretos de servidor en `supabase/functions/.env.push` y prepara `supabase/setup_push_vault.local.sql`. Se detiene sin reemplazar valores existentes.
+2. Carga los secretos en Ordia sin imprimirlos:
+
+   ```powershell
+   pnpm exec supabase secrets set --env-file supabase/functions/.env.push --project-ref dedtyhomynsmvatfnshs
+   ```
+
+3. Despliega la función. `verify_jwt` está desactivado porque el job no representa a un usuario; la función exige `x-ordia-cron-secret` y rechaza llamadas sin el secreto.
+
+   ```powershell
+   pnpm exec supabase functions deploy send-push-reminders --project-ref dedtyhomynsmvatfnshs --use-api --no-verify-jwt
+   ```
+
+4. Ejecuta el SQL local ignorado contra la ref explícita y elimínalo después. Crea en Vault `ordia_project_url` y `ordia_push_cron_secret` sin escribir sus valores en una migración.
+5. Ejecuta `supabase/setup_push_cron.example.sql` contra Ordia. Habilita `pg_cron` y `pg_net` y crea `ordia-push-reminders-hourly` de forma idempotente.
+6. Verifica el historial en **Integrations → Cron → Jobs**, los logs de `send-push-reminders` y la tabla de intentos sin exponer endpoints o claves.
+
+Supabase inyecta sus claves de servidor en la Edge Function; no se copian al repositorio. Las dependencias de la función están fijadas a versiones exactas en su `deno.json`.
+
+Al 27 de octubre de 2026, los pasos anteriores están aplicados en Ordia: cuatro secretos de función configurados, dos secretos de Vault presentes, Edge Function activa en versión 1, `pg_cron`/`pg_net` habilitados y un único job activo con expresión `0 * * * *`. El job solo construye la URL `/functions/v1/send-push-reminders` y envía el encabezado privado esperado. La función decide el horario mediante `America/Bogota`; fuera de 08:00–20:00 responde sin procesar recordatorios.
+
+### Instalación y prueba en dispositivos
+
+- Los service workers y Push API requieren HTTPS; `http://localhost` se acepta solo para desarrollo local.
+- En iPhone/iPad con iOS/iPadOS 16.4 o posterior, abre Ordia en Safari, usa **Compartir → Añadir a pantalla de inicio**, abre el icono instalado y pulsa **Activar notificaciones**. La versión abierta como pestaña no debe solicitar permiso.
+- En navegadores compatibles de computador o Android, inicia sesión y pulsa **Activar notificaciones**. Si el navegador deniega el permiso, debe rehabilitarse desde su configuración.
+- El sistema operativo, modos de ahorro, Focus y el proveedor push pueden retrasar o suprimir una entrega. Ordia registra intentos, no una garantía de presentación.
+
+La versión de prueba está disponible en **https://ordia-seven.vercel.app**. Para la primera prueba en iPhone:
+
+1. Abre esa URL en Safari.
+2. Usa **Compartir → Añadir a pantalla de inicio**.
+3. Abre Ordia desde el icono instalado e inicia sesión.
+4. Entra en **Gastos fijos**, pulsa **Activar notificaciones** y acepta el permiso de iOS.
+5. Crea o conserva una obligación impaga con vencimiento hoy o anterior.
+6. Entre 08:00 y 20:00 Bogotá, espera la siguiente hora en punto. El job se ejecuta una vez por hora. También puede hacerse una invocación autorizada puntual sin compartir secretos.
+
+### Despliegue de prueba en Vercel
+
+- Proyecto dedicado: `sargdev02-2791s-projects/ordia`.
+- URL estable: `https://ordia-seven.vercel.app`.
+- El despliegue se hizo desde el árbol local; no depende de un push a Git ni se redepliega automáticamente.
+- `vercel.json` declara Vite, `dist`, el fallback de SPA a `index.html` y cabeceras sin caché prolongada para `sw.js` y `manifest.webmanifest`.
+- Vercel contiene únicamente `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` y `VITE_VAPID_PUBLIC_KEY` en Preview y Production. No contiene claves privadas VAPID, `service_role` ni `PUSH_CRON_SECRET`.
+- Supabase Auth usa esa URL como Site URL. Conserva como redirects exactos confirmación y recuperación tanto para `http://localhost:5173` como para el dominio HTTPS.
+- Se comprobaron por HTTPS la raíz, acceso, gasto fijo, confirmación, recuperación, bundles, manifest y service worker. Las rutas directas devolvieron `200`; una visita anónima a `/gastos-fijos` terminó correctamente en `/iniciar-sesion`.
+
+El manifest declara `display: standalone`, `start_url: /` y `scope: /`. `sw.js` se sirve desde la raíz con `Service-Worker-Allowed: /`, contiene el manejador Push y abre `/gastos-fijos`. Falta comprobar una sesión autenticada y una entrega real en el iPhone.
+
+Referencias: [Supabase Scheduled Edge Functions](https://supabase.com/docs/guides/functions/schedule-functions), [Supabase Edge Function secrets](https://supabase.com/docs/guides/functions/secrets), [MDN Push API](https://developer.mozilla.org/en-US/docs/Web/API/Push_API) y [Web Push en iOS/iPadOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/).
+
 ## Aplicar la migración a Ordia
 
 La migración no debe aplicarse a ningún proyecto distinto de Ordia. Autentica la CLI con la cuenta que tiene acceso al proyecto y verifica la ref antes de continuar:
@@ -137,7 +219,7 @@ Comprueba que la salida identifique exclusivamente `dedtyhomynsmvatfnshs` y la m
 pnpm exec supabase db push
 ```
 
-Las migraciones crean las tablas, políticas RLS, funciones, triggers, privilegios mínimos y agregan cuentas, categorías, movimientos y gastos fijos a la publicación `supabase_realtime`. No uses otro proyecto ni elijas un destino por nombre aproximado.
+Las migraciones crean las tablas, políticas RLS, funciones, triggers y privilegios mínimos. Las tablas financieras que necesitan sincronización se agregan a `supabase_realtime`; las tablas de Web Push no dependen de Realtime. No uses otro proyecto ni elijas un destino por nombre aproximado.
 
 ### Estado al cerrar la etapa 3
 
@@ -161,6 +243,22 @@ El asesor de seguridad de Supabase mantiene una advertencia externa a esta etapa
 
 Las pruebas pgTAP locales no se ejecutaron porque Docker/PostgreSQL local no estaba activo. `fixed_expenses_test.sql` queda preparado para repetir localmente los flujos de recurrencia, pago, reversión, pausa, edición futura y aislamiento. La prueba real usó transacciones revertidas; Realtime entre dos navegadores y la experiencia visual todavía requieren la interacción manual descrita más abajo.
 
+### Estado de la etapa 4B
+
+Las migraciones `20261027001830_add_push_notifications.sql` y `20261027002318_harden_push_subscription_rpcs.sql` fueron aplicadas a **Ordia** (`dedtyhomynsmvatfnshs`). El historial local, el historial remoto consultado por MCP y la comparación de la CLI coinciden; un `db push --dry-run` posterior informó que no hay migraciones pendientes. La segunda migración mueve las operaciones privilegiadas de alta y baja a `private` y conserva en `public` envoltorios `SECURITY INVOKER`, sin editar la primera migración ya aplicada.
+
+En la base real se verificaron las tablas `push_subscriptions` y `push_notification_attempts`, RLS activo, una política de propietario por tabla, privilegios de tabla mínimos y RPC separados entre cliente autenticado y servidor. Ambas tablas estaban vacías al finalizar. El asesor de seguridad solo conserva el aviso preexistente de **Leaked Password Protection** y `supabase db lint` terminó sin hallazgos.
+
+La ejecución remota aislada conservada de esta etapa usó dos identidades `authenticated`, funciones del servidor y `ROLLBACK`. Comprobó registro por usuario, aislamiento de dispositivos, reserva idempotente de un intento, rechazo de una reserva simultánea, nueva comprobación después de pagar, pausa que impide el aviso futuro y reasignación segura de un endpoint compartido. La consulta de limpieza confirmó cero fixtures. La respuesta inválida `410` se simuló al completar el intento en PostgreSQL; no fue una respuesta real de un proveedor Web Push.
+
+El 27 de octubre de 2026 se generó el par VAPID y el secreto de Cron directamente en archivos locales ignorados, se cargaron los cuatro secretos de la función en Ordia y se crearon los dos secretos de Vault. `send-push-reminders` está desplegada y activa en versión 1 con `verify_jwt = false`; una llamada sin `x-ordia-cron-secret` devolvió `401` y una llamada autorizada devolvió `200`. La prueba autorizada ocurrió fuera de la ventana horaria y respondió `outside_send_window`, por lo que no intentó enviar avisos.
+
+`pg_cron` y `pg_net` están habilitados. Existe un único job activo `ordia-push-reminders-hourly`, con expresión `0 * * * *`, dirigido únicamente a `/functions/v1/send-push-reminders` y con la referencia al secreto de Vault. Aunque Cron usa una expresión horaria independiente de zona, la Edge Function calcula la fecha y hora en `America/Bogota` y solo procesa entre 08:00 y 20:00.
+
+También se ejecutó una solicitud de verificación con la misma construcción Vault + `pg_net` usada por el job. Terminó con HTTP `200`, sin timeout ni error, y `outside_send_window`; esto comprueba el trayecto y la autenticación del job sin enviar una notificación fuera del horario.
+
+La Edge Function no se sirvió localmente porque este entorno no tenía Docker/Deno disponibles, pero el despliegue compiló y ambas llamadas remotas comprobaron su arranque y protección. El frontend HTTPS está publicado en `https://ordia-seven.vercel.app`; permanecen pendientes una suscripción desde un navegador real, la respuesta efectiva de un proveedor Web Push —incluidos `404`/`410` reales— y la recepción/presentación en un dispositivo.
+
 ## Supabase local y prueba de base de datos
 
 Con Docker Desktop activo:
@@ -171,7 +269,7 @@ pnpm supabase:reset
 pnpm supabase:test
 ```
 
-Las pruebas pgTAP preparadas cubren saldo inicial cero, propiedad, idempotencia, transferencias inválidas, cuentas archivadas, ausencia de escritura parcial, categorías privadas y gastos fijos. `fixed_expenses_test.sql` añade fin de mes, febrero bisiesto, períodos omitidos sin duplicados, pagos y reversión, pausa y reactivación, cambios futuros e aislamiento. La comprobación final de RLS y Realtime debe hacerse además con dos sesiones Auth normales; no debe usarse `service_role` para afirmar aislamiento de usuario.
+Las pruebas pgTAP preparadas cubren saldo inicial cero, propiedad, idempotencia, transferencias inválidas, cuentas archivadas, ausencia de escritura parcial, categorías privadas y gastos fijos. `fixed_expenses_test.sql` añade fin de mes, febrero bisiesto, períodos omitidos sin duplicados, pagos y reversión, pausa y reactivación, cambios futuros e aislamiento. `push_notifications_test.sql` añade RLS, alta de dispositivos, bloqueo de escrituras directas, reserva concurrente, nueva comprobación antes de entregar, pausa/cancelación, aislamiento y desactivación de endpoints inválidos. Esta suite local no se ejecutó en esta etapa porque Docker Desktop/PostgreSQL local no estaba disponible; la prueba remota equivalente y revertida se describe arriba.
 
 Para repetir la inspección remota no destructiva:
 
@@ -190,9 +288,9 @@ pnpm test
 pnpm build
 ```
 
-Las verificaciones del frontend cubren protección de rutas y cambios de sesión, acciones rápidas y diálogos, cálculos financieros, categorías, filtros de cuentas, reglas de recurrencia de fin de mes y año bisiesto, estados de obligación y los formularios adaptables de configuración, pago y pausa. También comprueban límites mensuales de Bogotá, vencimientos anteriores, de hoy y posteriores, cambio de diciembre a enero, pago tardío, pago anticipado y que al pagar el período actual no se presente automáticamente el siguiente mes. Son pruebas unitarias o de interfaz con mocks; las comprobaciones transaccionales reales se describen en el estado de la etapa 4A.
+Las verificaciones del frontend cubren protección de rutas y cambios de sesión, acciones rápidas y diálogos, cálculos financieros, categorías, filtros de cuentas, reglas de recurrencia de fin de mes y año bisiesto, estados de obligación y los formularios adaptables de configuración, pago y pausa. También comprueban límites mensuales de Bogotá, vencimientos anteriores, de hoy y posteriores, cambio de diciembre a enero, pago tardío, pago anticipado y que al pagar el período actual no se presente automáticamente el siguiente mes. Las pruebas de Web Push comprueban fechas y horario de Bogotá, clasificación de víspera/vencimiento/vencido, ausencia de solicitud de permiso antes del gesto del usuario, guía de instalación en iPhone y estado no bloqueante si falta VAPID. Son pruebas unitarias o de interfaz con mocks; no prueban la entrega del proveedor.
 
-En el ajuste mensual de la vista pasaron `typecheck`, `lint`, 42 pruebas de Vitest y `build`.
+Al cerrar la etapa 4B pasaron `typecheck`, `lint`, **49 pruebas de Vitest en 7 archivos**, `build` y `git diff --check`.
 
 ## Comprobación manual remota
 
@@ -219,6 +317,10 @@ Usa dos correos reales distintos y dos ventanas o perfiles del navegador. No com
 19. Paga una obligación con un importe real distinto. Confirma que aparezca una sola vez como gasto en la cuenta y en los reportes; en movimientos debe figurar como **Gasto fijo** y no ofrecer edición o eliminación general.
 20. Deshaz el pago desde **Gastos fijos**. Confirma que la obligación vuelva a pendiente, el movimiento deje de afectar el saldo y la otra sesión se actualice.
 21. Con dos sesiones del mismo usuario, paga la misma obligación casi simultáneamente. Solo una operación debe quedar registrada. Luego confirma que el usuario B no reciba configuraciones, períodos ni movimientos de A.
+22. Abre `https://ordia-seven.vercel.app` en Safari, añádela a la pantalla de inicio, inicia Ordia desde el icono, autentícate y pulsa **Activar notificaciones**. Comprueba que el permiso no se solicite antes de ese gesto y que el dispositivo aparezca en la lista.
+23. Crea obligaciones de prueba para mañana, hoy y ayer y ejecuta una invocación autorizada dentro del horario documentado. Comprueba un aviso discreto por dispositivo, que al pulsarlo abra **Gastos fijos**, y que no revele nombre, importe ni identificadores en la pantalla bloqueada o la URL.
+24. Paga, pausa o cancela una obligación antes de la invocación y confirma que no se envíe. Ejecuta dos invocaciones simultáneas y comprueba que la reserva única evite duplicar el intento.
+25. Desactiva las notificaciones y luego cierra sesión en un dispositivo compartido. Confirma que el navegador cancele su suscripción y que la cuenta siguiente no reciba avisos de la anterior. La entrega real debe repetirse al menos en un iPhone/iPad instalado y en otro navegador compatible.
 
 ### Revisión visual pendiente
 
@@ -235,6 +337,8 @@ Si no hay una pestaña local con URL verificable y una sesión autorizada, compr
 - que pagar una obligación del mes la retire de la lista principal sin mostrar en su lugar un período del mes siguiente;
 - que un pago anticipado figure como pagado al llegar su mes, y que un pago tardío se contabilice según su fecha real de pago;
 - que pausar, reactivar, dar de baja y deshacer pago presenten confirmaciones y devuelvan el foco correctamente.
+- que la tarjeta **Notificaciones de pagos** sea legible en celular y computador, muestre el estado correcto y que la guía de iPhone no desborde;
+- que activar o desactivar conserve foco visible, mensajes comprensibles y controles táctiles cómodos.
 
 La atomicidad y los intentos de referencia cruzada deben confirmarse además con pgTAP o un cliente autenticado con las claves públicas de A/B; no se debe usar `service_role` como prueba de RLS.
 
@@ -245,12 +349,15 @@ src/
 ├── auth/        Contexto, eventos de sesión, rutas y pruebas
 ├── components/  Formularios y diálogos accesibles
 ├── finance/     Estado, Realtime, cálculos, recurrencias y pruebas
+├── notifications/ Política horaria de avisos y pruebas
 ├── pages/       Acceso, resumen financiero y gastos fijos privados
-├── services/    Cliente único de Supabase y acceso financiero
+├── services/    Cliente único de Supabase, acceso financiero y Web Push
 └── types/       Tipos compartidos
 supabase/
+├── functions/   Edge Function desplegada para procesar recordatorios
 ├── migrations/  Esquema versionado, RLS y Realtime
 ├── tests/       Pruebas pgTAP de integridad y aislamiento
+├── setup_push_cron.example.sql  Plantilla versionada del job aplicado sin secretos
 └── verify_financial_schema.sql  Inspección remota no destructiva
 ```
 
@@ -259,6 +366,6 @@ supabase/
 - Supabase Auth administra contraseñas, sesiones y tokens; el frontend usa exclusivamente la clave pública.
 - Las rutas protegidas son una medida de interfaz. La privacidad real de las tablas está en RLS y en las validaciones de propiedad de la base de datos.
 - Las suscripciones Realtime se filtran por `user_id`, se liberan al cerrar o cambiar de sesión y vuelven a consultar el estado al conectar.
-- Se implementaron gastos fijos y registro de pagos, pero no Web Push ni envío de recordatorios. Tampoco se implementaron calendarios, tareas, sugerencias, conversión de monedas, conexión bancaria ni publicación.
+- El backend Web Push, sus secretos y Cron están configurados en Ordia y el frontend de prueba está publicado por HTTPS en Vercel. La entrega sigue sin comprobarse hasta registrar un dispositivo y recibir un aviso real. No se implementaron calendarios, tareas, sugerencias, conversión de monedas ni conexión bancaria.
 
 El proyecto se desarrolla por etapas. No se debe comenzar la etapa siguiente hasta solicitarla expresamente.

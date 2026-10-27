@@ -7,6 +7,7 @@ import {
   supabase,
   supabaseConfigurationMessage,
 } from '../services/supabase'
+import { deactivatePushOnCurrentDevice } from '../services/pushNotifications'
 
 interface AuthProviderProps {
   children: ReactNode
@@ -46,7 +47,10 @@ export function AuthProvider({ children, client, configured }: AuthProviderProps
         setIsLoading(false)
 
         if (event === 'PASSWORD_RECOVERY') setIsPasswordRecovery(true)
-        if (event === 'SIGNED_OUT') setIsPasswordRecovery(false)
+        if (event === 'SIGNED_OUT') {
+          setIsPasswordRecovery(false)
+          void deactivatePushOnCurrentDevice(null).catch(() => undefined)
+        }
       },
     )
 
@@ -99,6 +103,11 @@ export function AuthProvider({ children, client, configured }: AuthProviderProps
     async signOut() {
       if (!activeClient) return {}
 
+      try {
+        await deactivatePushOnCurrentDevice(activeClient)
+      } catch {
+        // La suscripción del proveedor se invalida localmente aunque la API no responda.
+      }
       setSession(null)
       setIsPasswordRecovery(false)
       const { error } = await activeClient.auth.signOut()

@@ -33,11 +33,17 @@ credentials.json
 token.json
 *.pem
 *.key
+supabase/functions/.env
+supabase/functions/.env.push
+supabase/setup_push_cron.local.sql
+supabase/setup_push_vault.local.sql
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
+.vercel
+.ordia-auth-config
 .DS_Store
 *.suo
 *.ntvs*
