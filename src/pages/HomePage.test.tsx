@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
-import type { FinancialAccount, FinancialCategory, FixedExpensePeriod } from '../types/finance'
+import type { FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpensePeriod } from '../types/finance'
 import { HomePage } from './HomePage'
 
 vi.mock('../components/HomeTasks', () => ({ HomeTasks: () => <div>Checklist de tareas</div> }))
@@ -21,12 +21,12 @@ const mocks = vi.hoisted(() => ({
     accounts: [] as FinancialAccount[],
     categories: [] as FinancialCategory[],
     fixedExpensePeriods: [] as FixedExpensePeriod[],
-    fixedExpenses: [],
+    fixedExpenses: [] as FixedExpense[],
     fixedExpenseVersions: [],
     error: '',
     isLoading: false,
     realtimeStatus: 'connected' as const,
-    transactions: [],
+    transactions: [] as FinancialTransaction[],
   },
   archiveCategory: vi.fn(),
   createCategory: vi.fn(),
@@ -207,5 +207,36 @@ describe('acciones financieras rápidas', () => {
     expect(obligations).toHaveTextContent('Vencidos · 0')
     expect(obligations).toHaveTextContent('Los meses futuros se consultan en el detalle')
     expect(mocks.createTransaction).not.toHaveBeenCalled()
+  })
+
+  it('renderiza la sección de sugerencias financieras accesible desde el resumen', () => {
+    const pendingPeriod: FixedExpensePeriod = {
+      cancellation_reason: null, cancelled_at: null, category_id: 'expense-category', created_at: '', currency: 'COP',
+      due_date: '2026-10-28', expected_amount: 150000, fixed_expense_id: 'fixed-a', id: 'period-a',
+      paid_account_id: null, paid_category_id: null, paid_amount: null, paid_at: null, paid_on: null,
+      payment_request_id: null, suggested_account_id: 'account-a', transaction_id: null, updated_at: '', user_id: 'user-a', version_id: 'version-a',
+    }
+    mocks.finance.fixedExpenses = [{
+      id: 'fixed-a',
+      user_id: 'user-a',
+      client_request_id: 'fe-a',
+      name: 'Internet Hogar',
+      notes: null,
+      status: 'active',
+      paused_at: null,
+      deleted_at: null,
+      created_at: '',
+      updated_at: '',
+    }]
+    mocks.finance.fixedExpensePeriods = [pendingPeriod]
+    renderHome()
+
+    const link = screen.getByRole('link', { name: /Ver sugerencias financieras/i })
+    expect(link).toHaveAttribute('href', '#sugerencias-financieras')
+
+    const suggestionsSection = screen.getByLabelText('Sugerencias y análisis financiero')
+    expect(suggestionsSection).toBeInTheDocument()
+    expect(suggestionsSection).toHaveTextContent('Pagos próximos (2026-10-26 a 2026-11-01)')
+    expect(suggestionsSection).toHaveTextContent('Internet Hogar')
   })
 })

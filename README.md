@@ -127,6 +127,35 @@ Estos criterios se mantienen para gastos pausados o dados de baja: sus obligacio
 
 Pagar una obligación crea un gasto financiero normal y vincula ambas filas en una sola RPC transaccional. El importe y la fecha reales pueden diferir de lo previsto. `payment_request_id`, el bloqueo del período y las restricciones únicas evitan pagos duplicados. Ese gasto aparece una sola vez en movimientos, saldos, filtros y reportes; desde la lista general se identifica como **Gasto fijo** y se dirige al flujo especializado. **Deshacer pago** elimina lógicamente el movimiento y devuelve la obligación a pendiente en la misma operación. No hay pagos parciales en esta etapa.
 
+### Sugerencias y análisis financiero
+
+Ordia incorpora un motor determinista de reglas para ayudar a comprender gastos y anticipar pagos, sin servicios externos ni modelos de IA. Las observaciones son factuales y se derivan exclusivamente de los movimientos, categorías y obligaciones fijas registrados en las cuentas seleccionadas:
+
+1. **Resumen y comparaciones del período**:
+   - Calcula ingresos, gastos y el flujo neto (`ingresos - gastos`), excluyendo transferencias entre cuentas y saldos iniciales, y respetando movimientos eliminados lógicamente (`deleted_at`).
+   - Identifica las categorías con mayor gasto y su porcentaje de participación en el total, agrupando subcategorías bajo su categoría raíz sin duplicar importes.
+   - Compara los gastos del mes actual con los mismos días transcurridos del mes anterior (del día 1 a hoy frente al día 1 al mismo día del mes anterior).
+   - Ajusta y documenta la comparación cuando los meses tienen distinta duración (por ejemplo, el 31 de marzo frente a los 28 días de febrero, o el 31 de agosto frente a los 31 días de julio).
+   - Maneja el cambio de año (ej. enero comparado con diciembre del año anterior).
+   - Ante ausencia de historial anterior o gasto previo de cero, evita divisiones por cero y porcentajes engañosos (como +100% o +∞%), mostrando la cifra en COP y describiendo con neutralidad que no hay base comparativa.
+   - Tono estrictamente neutral y factual: describe únicamente lo registrado sin emitir juicios de valor ni asumir que la ausencia de registros signifique ausencia de gastos reales.
+
+2. **Pagos próximos y anticipación de saldo**:
+   - Ventana de compromisos a 7 días continuos en `America/Bogota` (`hoy` a `hoy + 6 días`).
+   - Presenta las obligaciones vencidas (`due_date < hoy`) por separado con distintivo de atención prioritaria.
+   - Excluye pagos ya realizados (`transaction_id`) y obligaciones canceladas (`cancelled_at`).
+   - Compara las obligaciones que tienen una cuenta sugerida frente al saldo actual registrado de esa cuenta:
+     - El contraste de saldo incluye los vencidos impagos y los próximos 7 días de esa cuenta; las etiquetas distinguen este criterio del total exclusivo de próximos pagos. Si el saldo registrado no alcanza, genera una alerta con el déficit exacto en COP y el desglose de obligaciones.
+     - Si el saldo es suficiente, indica la cobertura y calcula el saldo restante estimado tras cubrir dichos pagos.
+     - Aclara explícitamente que el saldo restante estimado se basa únicamente en el saldo registrado actual, sin proyectar ingresos futuros, no constituye dinero garantizado para gastar libremente y Ordia no realiza movimientos ni transferencias automáticas.
+   - Identifica con claridad las obligaciones que no tienen cuenta sugerida asignada (`suggested_account_id = null`), sin asignarlas arbitrariamente a ninguna cuenta.
+
+3. **Alcance y filtros**:
+   - Respeta estrictamente la selección de cuentas: todas, un subconjunto, una sola cuenta o ninguna cuenta.
+   - Cada tarjeta indica su alcance explícito (cuentas analizadas y fechas utilizadas).
+   - Cuando no hay cuentas seleccionadas, muestra un estado vacío claro y comprensible solicitando seleccionar al menos una cuenta para generar el análisis.
+   - El acceso es directo desde el resumen mediante el enlace de navegación «Ver sugerencias financieras ↓».
+
 ## Tareas y checklist personal
 
 La navegación **Resumen / Gastos fijos / Tareas / Calendario** permite abrir `/tareas` directamente después de iniciar sesión. Los formularios de creación y edición reutilizan el diálogo adaptable con foco inicial, cierre por Escape, retorno de foco y confirmación para descartar cambios. El título es obligatorio (máximo 200 caracteres); descripción (hasta 5.000), duración entera positiva en minutos, vencimiento y programación son opcionales. La prioridad predeterminada es media, con opciones baja y alta.
@@ -630,7 +659,7 @@ Al cerrar la etapa 4B pasaron `typecheck`, `lint`, **49 pruebas de Vitest en 7 a
 - Se contrastaron todos los módulos locales con las funciones remotas: `icloud-calendar` y `google-calendar`, ambas **versión 5 ACTIVE**, coinciden. El cierre no vuelve a desplegarlas ni cambia secretos.
 - Las trece migraciones coinciden en el proyecto **Ordia — `dedtyhomynsmvatfnshs`**. Se incluyen las migraciones de tareas, iCloud, Google, sugerencias de horarios (`20261028020000_add_task_scheduling_suggestions.sql`) y la serialización y protección contra conflictos de concurrencia (`20261028130644_serialize_task_scheduling_conflicts.sql`); no se vuelven a ejecutar ni se editan.
 - La migración `20261028130644_serialize_task_scheduling_conflicts.sql` añade serialización a nivel de usuario con `pg_advisory_xact_lock`, trigger `validate_personal_task_schedule` contra solapamientos también en modificaciones manuales, y amplía la RPC `schedule_personal_task` para revalidar versión, duración, futuro, disponibilidad, márgenes, vencimiento vigente, otras tareas, eventos externos y cobertura/frescura. `p_accept_unverified_calendars` omite únicamente cobertura/frescura; los demás controles permanecen. La revisión puntual posterior confirmó estas reglas sin modificar la migración aplicada.
-- La suite local actual contiene **177 pruebas en 24 archivos**, cubriendo cálculo de huecos, márgenes, límites de vencimiento, tareas vencidas como reprogramación tardía, cobertura, reloj de resumen en tiempo real, eventos en curso simultáneos no truncados (>5), diálogos de disponibilidad y rechazo/confirmación de calendarios no verificados. Las cuatro carreras reales entre conexiones SQL están descritas por separado y no se cuentan como pruebas Vitest.
+- La suite local actual contiene **201 pruebas en 26 archivos**, cubriendo cálculo de huecos, márgenes, límites de vencimiento, tareas vencidas como reprogramación tardía, cobertura, reloj de resumen en tiempo real, eventos en curso simultáneos no truncados (>5), diálogos de disponibilidad, concurrencia, y las sugerencias financieras deterministas (comparaciones históricas con ajuste de meses, obligaciones vencidas y próximas en 7 días, alertas de saldo insuficiente y desgloses de categorías). La configuración de chunks de Vite separa Supabase y las bibliotecas base, reduciendo el archivo principal a 29 kB sin advertencias de tamaño. Las cuatro carreras reales entre conexiones SQL están descritas por separado y no se cuentan como pruebas Vitest.
 - Esta entrega reúne sugerencias de horarios, protección contra conflictos, actualización temporal de «Eventos de hoy», pruebas y las dos migraciones del planificador ya aplicadas. La publicación se realiza mediante commit y push normal a `master`, seguido del despliegue automático existente de Vercel, sin despliegue manual paralelo. Antes del push se volvió a contrastar el SQL local con las 13 migraciones de Ordia (ignorando formato/comentarios), sin diferencias ni ejecución de migraciones.
 - La publicación usa `origin=https://github.com/SargDev02/Ordia.git`, rama **master**, y la integración Git de Vercel ya enlazada. El frontend solo necesita las tres variables públicas existentes. Los valores de `.env*`, `.vercel`, `.temp`, credenciales de herramientas, dependencias, compilaciones y capturas temporales quedan fuera del commit.
 - Las verificaciones HTTP y de navegador de la URL publicada se informan al terminar el despliegue. Una ruta que sirve `index.html` con `200` no demuestra por sí sola que React haya redirigido correctamente ni que OAuth haya concluido; esas comprobaciones se distinguen en la entrega.
@@ -644,6 +673,7 @@ Para probar esta publicación en iPhone:
 5. Confirma Día/Semana/detalle, todo el día y horas de Bogotá. Repite con dos sesiones y usuarios distintos para comprobar Realtime y privacidad; no compartas contraseñas, códigos ni tokens. La entrega Web Push sigue siendo una prueba independiente.
 6. En **Tareas → Disponibilidad**, revisa franjas y margen; crea una tarea de prueba con duración, solicita sugerencias y acepta una. Comprueba su horario en Calendario y que un conflicto conserve un mensaje claro. Una tarea vencida debe indicar reprogramación tardía y mantener su vencimiento original.
 7. En **Resumen → Eventos de hoy**, comprueba «En curso», el grupo de todo el día y los próximos. Al terminar un evento debe desaparecer del resumen en hasta 30 segundos; al volver del segundo plano debe actualizarse. El evento debe seguir disponible en Calendario. Esta comprobación autenticada en iPhone queda pendiente del dispositivo del usuario.
+8. En **Resumen → Ver sugerencias financieras**, prueba todas, una y ninguna cuenta. Revisa fechas, comparación mensual y categorías. Los compromisos por cuenta incluyen vencidos y próximos 7 días; el total de pagos próximos conserva su propia ventana. Las obligaciones sin cuenta se identifican aparte y ninguna sugerencia mueve dinero.
 
 ## Comprobación manual remota
 
@@ -717,11 +747,20 @@ supabase/
 └── verify_financial_schema.sql  Inspección remota no destructiva
 ```
 
+## Cierre del alcance inicial — 28 de octubre de 2026
+
+- Se conservaron los cambios de sugerencias financieras, planificación, calendarios y pruebas. La revisión no identificó archivos ajenos ni fallos bloqueantes pendientes. Se aclararon únicamente las etiquetas del contraste de saldo, que incluye vencidos y próximos 7 días; no se cambiaron cálculos ni reglas financieras.
+- Pasaron de nuevo `pnpm typecheck`, `pnpm lint`, las 201 pruebas, `pnpm build` y `git diff --check` después de los cambios posteriores a la publicación anterior. El build final genera 11 módulos JS: incluye chunks de React/Router, Supabase y el runtime de Vite. Todos se importaron y ejecutaron en un navegador contra `pnpm preview`, con resultado PASS y sin errores ni advertencias de consola. Esta comprobación valida la ejecución de módulos compilados; no sustituye los flujos privados con una sesión real.
+- Se verificaron identidad e historial de **Ordia — `dedtyhomynsmvatfnshs`** y el SQL de las 13 migraciones, sin diferencias salvo formato/comentarios. No se ejecutaron migraciones ni pruebas destructivas adicionales. Permanecen válidos los resultados previos de PostgreSQL real, con sus límites documentados.
+- Se compararon los 14 archivos desplegados de las funciones necesarias con los locales: `google-calendar` v5, `icloud-calendar` v5 y `send-push-reminders` v4, todas ACTIVE y coincidentes (normalizando saltos de línea). No necesitan redespliegue ni cambios de secretos.
+- La entrega usa un commit en `master` y el despliegue automático Git de Vercel. La URL es `https://ordia-seven.vercel.app`. Ready, SHA, asignación del dominio, archivos estáticos y navegación se contrastan al terminar y se informan en la entrega; no basta con que el HTML responda 200. No se hace un despliegue manual paralelo.
+- No se dispone de una sesión Auth autorizada en el navegador de revisión. Siguen pendientes las sugerencias con datos personales, la navegación privada y la comprobación en iPhone, OAuth iniciado desde producción, Realtime con dos sesiones Auth normales y entrega push real. El checklist de iPhone anterior separa esas pruebas de las unitarias y de la carga de módulos.
+
 ## Seguridad y alcance
 
 - Supabase Auth administra contraseñas, sesiones y tokens; el frontend usa exclusivamente la clave pública.
 - Las rutas protegidas son una medida de interfaz. La privacidad real de las tablas está en RLS y en las validaciones de propiedad de la base de datos.
 - Las suscripciones Realtime se filtran por `user_id`, se liberan al cerrar o cambiar de sesión y vuelven a consultar el estado al conectar.
-- El backend Web Push, sus secretos y Cron están configurados en Ordia. La entrega sigue sin comprobarse hasta registrar un dispositivo y recibir un aviso real. El usuario confirmó tareas/checklist y conexión/consulta real de iCloud y Google; esta etapa publica su frontend mediante GitHub y Vercel. Se mantienen pendientes OAuth iniciado desde el dominio publicado, la sesión en iPhone y las comprobaciones avanzadas entre usuarios/dispositivos descritas arriba. No se implementaron Notion, escritura en calendarios, sugerencias, recurrencia/notificaciones de tareas, conversión de monedas ni conexión bancaria.
+- El backend Web Push, sus secretos y Cron están configurados en Ordia. La entrega sigue sin comprobarse hasta registrar un dispositivo y recibir un aviso real. El usuario confirmó tareas/checklist y conexión/consulta real de iCloud y Google; esta etapa publica su frontend mediante GitHub y Vercel. Se mantienen pendientes OAuth iniciado desde el dominio publicado, la sesión en iPhone y las comprobaciones avanzadas entre usuarios/dispositivos descritas arriba. Incluye sugerencias financieras y de horarios mediante reglas deterministas. No se implementaron Notion, escritura en calendarios, recurrencia/notificaciones de tareas, conversión de monedas ni conexión bancaria.
 
 El proyecto se desarrolla por etapas. No se debe comenzar la etapa siguiente hasta solicitarla expresamente.

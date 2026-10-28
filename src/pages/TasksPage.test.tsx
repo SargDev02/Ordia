@@ -1,7 +1,7 @@
 import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PersonalTask, TaskSchedulingPreferences } from '../types/tasks'
 import { TasksContext, type TasksState } from '../tasks/tasks-context'
 import TasksPage from './TasksPage'
@@ -96,6 +96,7 @@ function renderTasks(tasks: PersonalTask[] = [], home = false) {
 }
 
 beforeEach(() => {
+  vi.setSystemTime(new Date('2026-10-27T13:00:00Z'))
   vi.clearAllMocks()
   mocks.save.mockResolvedValue(undefined)
   mocks.complete.mockResolvedValue(undefined)
@@ -103,6 +104,10 @@ beforeEach(() => {
   mocks.schedule.mockResolvedValue(undefined)
   mocks.savePrefs.mockResolvedValue(undefined)
   mocks.preferences = null
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('formularios y checklist de tareas', () => {
