@@ -6,6 +6,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthProvider } from './AuthContext'
 import { AppRoutes } from './AuthRoutes'
 
+// Estas pruebas usan un cliente Auth explícito. Los módulos privados no deben
+// abrir conexiones reales con la configuración de .env.local al renderizarse.
+vi.mock('../services/supabase', () => ({
+  supabase: null,
+  isSupabaseConfigured: false,
+  supabaseConfigurationMessage: 'Faltan las variables públicas de Supabase para conectar la autenticación.',
+}))
+
 type AuthListener = (event: AuthChangeEvent, session: Session | null) => void
 
 function sessionFor(email: string): Session {
@@ -92,7 +100,7 @@ describe('rutas y sesión', () => {
 
   it('redirige a iniciar sesión cuando la ruta protegida no tiene sesión', async () => {
     const fake = createFakeClient(null)
-    renderRoutes(fake.client)
+    renderRoutes(fake.client, '/calendario')
 
     expect(await screen.findByRole('heading', { name: 'Inicia sesión' })).toBeInTheDocument()
     expect(screen.queryByText('Módulos previstos')).not.toBeInTheDocument()

@@ -25,9 +25,11 @@ export function FinanceHeader({ realtimeStatus }: { realtimeStatus: RealtimeStat
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <nav aria-label="Finanzas" className="flex rounded-xl bg-[#eaf0e7] p-1">
+          <nav aria-label="Navegación principal" className="flex max-w-full flex-wrap rounded-xl bg-[#eaf0e7] p-1">
             <Link className={`rounded-lg px-4 py-2 text-sm font-semibold ${location.pathname === '/' ? 'bg-white text-[#173f31] shadow-sm' : 'text-[#557064]'}`} to="/">Resumen</Link>
             <Link className={`rounded-lg px-4 py-2 text-sm font-semibold ${location.pathname === '/gastos-fijos' ? 'bg-white text-[#173f31] shadow-sm' : 'text-[#557064]'}`} to="/gastos-fijos">Gastos fijos</Link>
+            <Link className={`rounded-lg px-4 py-2 text-sm font-semibold ${location.pathname === '/tareas' ? 'bg-white text-[#173f31] shadow-sm' : 'text-[#557064]'}`} to="/tareas">Tareas</Link>
+            <Link className={`rounded-lg px-4 py-2 text-sm font-semibold ${location.pathname === '/calendario' ? 'bg-white text-[#173f31] shadow-sm' : 'text-[#557064]'}`} to="/calendario">Calendario</Link>
           </nav>
           <div className="flex items-center gap-2 text-xs text-[#66796f]"><span className={`size-2 rounded-full ${realtimeStatus === 'connected' ? 'bg-[#54a675]' : realtimeStatus === 'connecting' ? 'bg-[#d5a747]' : 'bg-[#b66256]'}`} /><span>{realtimeStatus === 'connected' ? 'Sincronización activa' : realtimeStatus === 'connecting' ? 'Conectando…' : 'Sin conexión en tiempo real'}</span></div>
         </div>

@@ -35,6 +35,9 @@ token.json
 *.key
 supabase/functions/.env
 supabase/functions/.env.push
+supabase/functions/.env.icloud
+supabase/functions/.env.google
+supabase/functions/.env.google-key
 supabase/setup_push_cron.local.sql
 supabase/setup_push_vault.local.sql
 

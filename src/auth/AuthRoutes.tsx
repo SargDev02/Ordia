@@ -6,15 +6,18 @@ import { AuthPage } from '../pages/AuthPage'
 import { ConfigurationPendingPage } from '../pages/ConfigurationPendingPage'
 import { EmailConfirmedPage } from '../pages/EmailConfirmedPage'
 import { UpdatePasswordPage } from '../pages/UpdatePasswordPage'
+import { TasksProvider } from '../tasks/TasksProvider'
 
 const FinancePage = lazy(() => import('../pages/FinancePage'))
+const TasksPage = lazy(() => import('../pages/TasksPage'))
+const CalendarPage = lazy(() => import('../pages/CalendarPage'))
 
 function ProtectedRoute() {
   const { session } = useAuth()
   const location = useLocation()
 
   return session
-    ? <Outlet />
+    ? <TasksProvider key={session.user.id} userId={session.user.id}><Outlet /></TasksProvider>
     : <Navigate to="/iniciar-sesion" replace state={{ from: location.pathname }} />
 }
 
@@ -39,6 +42,8 @@ export function AppRoutes() {
       <Route path="/auth/confirm" element={<EmailConfirmedPage />} />
       <Route path="/restablecer-contrasena" element={<UpdatePasswordPage />} />
       <Route element={<ProtectedRoute />}>
+        <Route path="/calendario" element={<Suspense fallback={<LoadingScreen />}><CalendarPage /></Suspense>} />
+        <Route path="/tareas" element={<Suspense fallback={<LoadingScreen />}><TasksPage /></Suspense>} />
         <Route
           path="/"
           element={(

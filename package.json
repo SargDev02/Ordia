@@ -10,6 +10,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "push:generate-keys": "node scripts/generate-vapid-keys.mjs",
+    "icloud:generate-key": "node scripts/generate-icloud-key.mjs",
+    "google:generate-key": "node scripts/generate-google-key.mjs",
     "test": "vitest run",
     "supabase:start": "supabase start",
     "supabase:reset": "supabase db reset",
@@ -22,6 +24,7 @@
     "react-router-dom": "7.18.4"
   },
   "devDependencies": {
+    "@js-temporal/polyfill": "0.5.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
@@ -30,6 +33,8 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "fast-xml-parser": "5.11.2",
+    "ical.js": "2.2.1",
     "jsdom": "30.1.3",
     "oxlint": "^1.88.0",
     "supabase": "2.122.0",

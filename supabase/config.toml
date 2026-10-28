@@ -392,6 +392,14 @@ deno_version = 2
 [functions.send-push-reminders]
 verify_jwt = false
 
+[functions.icloud-calendar]
+# El handler valida el bearer de usuario con Supabase Auth getUser antes de operar.
+verify_jwt = false
+
+[functions.google-calendar]
+# POST de API valida getUser; authorize/callback validan state, origen y cookie HttpOnly.
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

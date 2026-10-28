@@ -5,6 +5,9 @@ import { MemoryRouter } from 'react-router-dom'
 import type { FinancialAccount, FinancialCategory, FixedExpensePeriod } from '../types/finance'
 import { HomePage } from './HomePage'
 
+vi.mock('../components/HomeTasks', () => ({ HomeTasks: () => <div>Checklist de tareas</div> }))
+vi.mock('../components/HomeCalendar', () => ({ HomeCalendar: () => <div>Agenda de eventos</div> }))
+
 const mocks = vi.hoisted(() => ({
   archiveAccount: vi.fn(),
   createAccount: vi.fn(),
