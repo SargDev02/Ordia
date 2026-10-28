@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { supabase } from '../services/supabase'
-import { deleteTask, fetchTasks, saveTask, setTaskCompleted } from '../services/tasks'
+import { deleteTask, fetchTasks, saveTask, scheduleTaskWithCheck, setTaskCompleted } from '../services/tasks'
 import type { PersonalTask } from '../types/tasks'
 import type { RealtimeStatus } from '../finance/finance-context'
 import { TasksContext } from './tasks-context'
@@ -72,5 +72,6 @@ export function TasksProvider({ userId, children }: { userId: string; children: 
     save: (input, requestId, id) => mutate(() => saveTask(input, requestId, id)),
     complete: (id, completed) => mutate(() => setTaskCompleted(id, completed)),
     remove: (id) => mutate(() => deleteTask(id)),
+    schedule: (taskId, scheduledAt, expectedUpdatedAt, estimatedMinutes, acceptUnverifiedCalendars) => mutate(() => scheduleTaskWithCheck(taskId, scheduledAt, expectedUpdatedAt, estimatedMinutes, acceptUnverifiedCalendars)),
   }}>{children}</TasksContext.Provider>
 }

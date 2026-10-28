@@ -20,3 +20,42 @@ export interface PersonalTask extends TaskInput {
   created_at: string
   updated_at: string
 }
+
+export interface AvailabilitySlot {
+  day_of_week: number // 1 = Lunes, ..., 7 = Domingo (ISO)
+  start_time: string  // 'HH:mm'
+  end_time: string    // 'HH:mm'
+}
+
+export interface TaskSchedulingPreferences {
+  user_id: string
+  buffer_minutes: number
+  all_day_blocks: boolean
+  slots: AvailabilitySlot[]
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ScheduleProposal {
+  start_at: string       // ISO timestamp
+  end_at: string         // ISO timestamp
+  day_date: string       // YYYY-MM-DD
+  day_of_week: number    // 1..7
+  duration_minutes: number
+  explanation: string    // Motivo breve de la sugerencia
+  is_late_reschedule?: boolean
+}
+
+export interface TaskSuggestionResult {
+  proposals: ScheduleProposal[]
+  explanation?: string
+  error?: string
+}
+
+export interface CalendarCoverageInfo {
+  isCovered: boolean
+  hasSelectedCalendars: boolean
+  lastSyncedAt: string | null
+  staleOrError: boolean
+  warning?: string
+}

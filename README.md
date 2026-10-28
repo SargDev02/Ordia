@@ -140,6 +140,53 @@ La navegación **Resumen / Gastos fijos / Tareas / Calendario** permite abrir `/
 - El inicio muestra como máximo cinco pendientes que estén programadas para hoy, venzan hoy o ya estén vencidas. Cada tarea aparece una sola vez aunque cumpla varias condiciones; el contador y el enlace permiten consultar el resto. Se pueden completar directamente y crear nuevas tareas sin perder las acciones financieras.
 - La fecha de las vistas se actualiza al llegar la medianoche de Bogotá y al regresar a la pestaña. Los filtros no alteran saldos, pagos ni sus recordatorios.
 
+### Sugerencias deterministas de horarios para tareas
+
+Ordia incorpora un motor determinista de reglas para proponer horarios de trabajo a tareas pendientes, sin servicios externos ni modelos de IA:
+
+1. **Disponibilidad personal por usuario**:
+   - Configuración persistente en la tabla `task_scheduling_preferences`, sincronizada mediante Realtime y aislada con RLS.
+   - Permite definir días de la semana (Lunes a Domingo) y múltiples franjas horarias por día (ej. mañana y tarde), validando que no se superpongan entre sí.
+   - Margen entre compromisos (`buffer_minutes`, predeterminado 15 minutos).
+   - Opción explícita para decidir si los eventos de todo el día bloquean la jornada completa (`all_day_blocks`, predeterminado activado).
+   - La zona horaria se muestra y opera siempre en `America/Bogota (UTC−5)`. Si no hay disponibilidad configurada, la aplicación solicita definirla antes de generar sugerencias.
+
+2. **Cálculo determinista de espacios libres**:
+   - Explora una ventana de 7 días continuos a partir del día actual en Bogotá.
+   - Excluye estrictamente horas pasadas (`now + buffer`), eventos ocupados de calendarios seleccionados (iCloud y Google) y tareas pendientes ya programadas.
+   - Fusiona intervalos ocupados superpuestos o contiguos de cualquier proveedor antes de calcular huecos.
+   - Los eventos de la copia sincronizada se tratan de forma conservadora como ocupados. Esta etapa no añade una clasificación propia de `free`/`busy` ni de invitaciones rechazadas.
+   - Regla conservadora: ante eventos con horario sin estado explícito se asume ocupado; para tareas programadas sin duración estimada, se reserva un bloque preventivo de 30 minutos más margen y se advierte en la interfaz.
+
+3. **Cobertura de datos de calendario**:
+   - Comprueba que el rango de 7 días esté cubierto por la sincronización de los calendarios externos seleccionados.
+   - Si una sincronización tiene más de 24 horas o falló, se informa y se evita dar por libres esos horarios sin alertar al usuario.
+   - Si no hay calendarios conectados o seleccionados, permite sugerencias basadas únicamente en la disponibilidad y tareas de Ordia, informando de esta limitación.
+   - Muestra la fecha/hora de la última sincronización y permite actualizar antes de generar sugerencias.
+
+4. **Sugerencias y planificación**:
+   - Sección compacta «Tareas por organizar» que prioriza por vencimiento próximo (`due_on`) y luego por prioridad (alta > media > baja) con desempate estable por título e ID.
+   - «Sugerir horario» requiere una duración estimada en minutos (editable en la misma fila si no se especificó antes).
+   - Genera hasta 3 alternativas ordenadas por cercanía en el tiempo. Cada alternativa cabe completa en un único bloque continuo.
+   - Respeta la fecha límite: no sugiere horarios posteriores al final del día de vencimiento. Si la tarea ya venció, indica el atraso y ofrece los próximos espacios como reprogramación tardía.
+   - Las alternativas son propuestas independientes. Al programar una, las restantes se recalculan inmediatamente.
+
+5. **Aceptación y seguridad concurrente frente a conflictos**:
+   - **Diagnóstico y protección multicanal**: El bloqueo de fila `SELECT ... FOR UPDATE` sobre la fila de la tarea protege frente a modificaciones concurrentes sobre la misma tarea, pero resultaba insuficiente para serializar dos tareas distintas del mismo usuario intentando programarse en el mismo horario.
+   - **Migración `20261028130644_serialize_task_scheduling_conflicts.sql`**:
+     - Serializa la comprobación y escritura por usuario en PostgreSQL utilizando un bloqueo consultivo transaccional: `pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('ordia.task_schedule:' || user_id::text, 0))`.
+     - Trigger `validate_personal_task_schedule` ejecutado en `BEFORE INSERT OR UPDATE ON public.personal_tasks`: adquiere el candado consultivo y comprueba que ninguna otra tarea pendiente del usuario solape el intervalo futuro `[scheduled_at, scheduled_at + duración)`, usando 30 minutos si falta duración. Protege contra solapamientos estrictos también en edición manual (`TaskEditor`, `saveTask`, `INSERT` o `UPDATE` directos), con SQLSTATE `23P01 (task_schedule_overlap)`. Las comprobaciones adicionales de disponibilidad, margen, vencimiento y caché externa pertenecen a la RPC de aceptación de sugerencias.
+     - La RPC `schedule_personal_task` revalida exhaustivamente:
+       1. Estado, versión (`updated_at`) y duración positiva (`estimated_minutes > 0`).
+       2. Que `scheduled_at` no sea anterior a `now()` (inicio de la transacción).
+       3. Que el intervalo quepa dentro de las franjas horarias configuradas por el usuario (`outside_availability`).
+       4. Que respete los márgenes configurados (`buffer_minutes`) respecto a otras tareas programadas y eventos de calendario.
+       5. Si `due_on` es hoy o posterior en America/Bogota, debe terminar antes de acabar ese día (`after_due_date`). Si el vencimiento ya pasó, permite una reprogramación tardía futura sin cambiar `due_on`; el frontend muestra «Venció» y «Reprogramación tardía» con la fecha original.
+       6. Que no solape con otras tareas programadas del usuario (`task_schedule_overlap`).
+       7. Que no entre en conflicto con eventos de los calendarios externos seleccionados (`calendar_event_conflict`).
+       8. Que cada día local afectado por el intervalo y sus márgenes tenga cobertura en una ventana sincronizada de la generación actual, reciente (últimas 24 horas), sin errores y con conexión vigente. Si no se cumple, rechaza con `calendar_unverified`. La aceptación explícita (`p_accept_unverified_calendars = true`) omite **solo cobertura/frescura**; conserva propiedad, versión, estado, duración, disponibilidad, vencimiento vigente, márgenes, conflictos entre tareas y eventos externos ya conocidos de la generación actual. No considera libre un evento conocido por el hecho de que su caché esté desactualizada.
+   - **Limitación documentada de calendarios externos**: La validación de conflictos con eventos de Google o iCloud se efectúa sobre la última copia sincronizada almacenada en Supabase. Ordia no escribe eventos en Google Calendar ni iCloud, ni puede bloquear modificaciones externas realizadas directamente en esos proveedores con posterioridad a la sincronización. Si una sincronización posterior revela un conflicto externo, la interfaz de Calendario lo señala con un distintivo para que el usuario pueda reprogramar la tarea sin moverla automáticamente.
+
 ### Datos, sincronización y migración de tareas
 
 `supabase/migrations/20261027172426_add_personal_tasks.sql` crea `personal_tasks`, sus índices, restricciones, trigger de validación y RPC idempotente de creación. La migración fue creada con `supabase migration new`, revisada con dry-run y aplicada una sola vez mediante CLI al proyecto **Ordia** (`dedtyhomynsmvatfnshs`). Al verificar la etapa de tareas coincidían las siete migraciones existentes entonces; no se modificaron las seis anteriores.
@@ -148,14 +195,47 @@ RLS restringe SELECT, INSERT y UPDATE al propietario. Los privilegios por column
 
 `personal_tasks` pertenece a `supabase_realtime`. El contexto escucha INSERT y UPDATE filtrados por usuario, incluida la baja lógica, y vuelve a consultar al conectar/reconectar, al recuperar conexión, foco o visibilidad. El estado se monta con una clave de usuario distinta en cada sesión, invalida respuestas anteriores y libera el canal al salir. No necesita calendarios ni otra conexión externa. Esta estrategia sigue la documentación de [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes) y [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
 
-### Verificaciones de tareas
+### Verificaciones de tareas y planificación
 
-- Pasaron `pnpm typecheck`, `pnpm lint`, `pnpm test` (65 pruebas en 11 archivos), `pnpm build` y `git diff --check`.
-- Vitest cubre creación/edición, conservación ante errores, confirmación de descarte/eliminación, foco, bloqueo de doble envío, checklist, completar/desmarcar, búsqueda/prioridad, tareas sin fechas, programación pasada, vencimiento hoy, cambio de día/mes/año en Bogotá y conversión horaria. Los tests del contexto comprueban cambio de usuario, respuestas tardías, limpieza y recarga por eventos/reconexión. Son pruebas unitarias y de interfaz con mocks.
-- En PostgreSQL remoto real pasó `supabase/checks/personal_tasks_integration.sql`: creación y reintento idempotente, edición, completar/desmarcar, fechas exactas, validaciones, restricciones de propietario/finalización, aislamiento A/B, baja lógica e inaccesibilidad de `anon`. La prueba crea dos fixtures exclusivos dentro de una transacción, cambia al rol `authenticated` con identidad A/B, no usa `service_role` y termina con `ROLLBACK`. Se confirmó que no quedaron usuarios ni tareas de prueba. Esto prueba políticas reales, pero no equivale a iniciar sesión con dos cuentas a través de Supabase Auth.
-- Se inspeccionaron RLS, políticas, privilegios por columna, función invocadora y publicación Realtime. `supabase db lint --linked` terminó sin hallazgos. El asesor de seguridad mantiene únicamente el aviso preexistente de [Leaked Password Protection](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
+- Pasaron `pnpm typecheck`, `pnpm lint`, `pnpm test` (177 pruebas en 24 archivos), `pnpm build` y `git diff --check` en la revisión puntual del planificador del 28 de octubre de 2026. La compilación conserva un aviso no bloqueante por un chunk de más de 500 kB.
+- Vitest cubre creación/edición, conservación ante errores, confirmación de descarte/eliminación, foco, bloqueo de doble envío, checklist, completar/desmarcar, búsqueda/prioridad, tareas sin fechas, programación pasada, vencimiento hoy, cambio de día/mes/año en Bogotá y conversión horaria. Incluye también cálculo de huecos y disponibilidad personal, márgenes preventivos, eventos de todo el día, reprogramación tardía, cobertura de 7 días, reloj en tiempo real, eventos en curso simultáneos (>5) y manejo de errores de concurrencia y calendarios no verificados. Son pruebas unitarias y de interfaz con mocks.
+- En PostgreSQL remoto real pasó `supabase/checks/personal_tasks_integration.sql` y `supabase/checks/task_scheduling_concurrency.sql`:
+  - `personal_tasks_integration.sql`: creación y reintento idempotente, edición, completar/desmarcar, fechas exactas, validaciones, restricciones de propietario/finalización, aislamiento A/B, baja lógica e inaccesibilidad de `anon`.
+  - `task_scheduling_concurrency.sql`: pese a su nombre histórico, son comprobaciones **secuenciales en una única transacción**, no una carrera. Comprueba rechazo de solapamientos por RPC, `UPDATE` e `INSERT`, franjas, márgenes, conflicto con un evento de Google y aislamiento A/B. Se volvió a ejecutar y pasó en esta revisión.
+  - Ambas pruebas crean fixtures dentro de una transacción, ejecutan las operaciones de tareas con rol `authenticated` y terminan con `ROLLBACK`. La preparación de usuarios/cachés requiere privilegios administrativos; no son sesiones Supabase Auth/JWT reales de navegador.
+- También pasó en Ordia `supabase/checks/task_scheduling_guards.sql`, **secuencial**, con comprobación exacta de SQLSTATE y mensaje. Verifica reprogramación de vencida conservando `due_on`, rechazo de fechas posteriores a un vencimiento vigente (incluido hoy), copia externa vieja o sin cobertura, y aceptación solo de esa advertencia. Incluso aceptando rechaza pasado, duración cero, falta de disponibilidad, horario fuera de franja, tarea completada/versión antigua, solapamiento propio, margen de 15 minutos, eventos conocidos de Google/iCloud (incluido todo el día y conexión que requiere reconexión), tarea ajena y cambio de propietario. Finalizó con `ROLLBACK` y cero usuarios fixture. Son cachés de prueba; no llama a Google ni Apple.
+- Se corrigió únicamente la clasificación de errores del servicio frontend: los códigos compartidos `22023` y `23P01` ocultaban errores de vencimiento, pasado, duración y eventos detrás de mensajes de disponibilidad u otra tarea. Las pruebas reprodujeron cuatro fallos antes de corregirlos. Vitest comprueba ahora los mensajes específicos, la transmisión explícita de la aceptación, el rechazo posterior de un conflicto conocido y la etiqueta de reprogramación tardía sin cambiar el vencimiento. Incluye el cambio de año a las 00:00 de Bogotá; estas son pruebas con mocks/cálculo local, distintas de las SQL reales.
+- Se inspeccionaron RLS, políticas, privilegios por columna, funciones invocadoras, triggers y publicación Realtime. `supabase db lint --linked` terminó sin hallazgos. El asesor de seguridad mantiene únicamente el aviso preexistente de [Leaked Password Protection](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
 - Docker Desktop no tenía el motor activo, por lo que no se ejecutó la suite local de PostgreSQL. La prueba SQL aislada se puede repetir localmente con `pnpm exec supabase db query --local --file supabase/checks/personal_tasks_integration.sql` después de iniciar Supabase; está separada de la suite pgTAP.
 - El usuario confirmó el funcionamiento real de tareas y checklist. La revisión automatizada no accedió a una sesión autenticada verificable para repetirlo visualmente; no se reutilizó una ventana identificada solo por su título. La entrega mediante WebSockets entre dos sesiones reales y la prueba autenticada del frontend publicado siguen en la lista manual.
+
+### Carrera real entre conexiones PostgreSQL — revisión del 28 de octubre
+
+Se verificó **Ordia — `dedtyhomynsmvatfnshs`**, PostgreSQL 17.11, mediante MCP Personales y CLI enlazada. El historial conserva las 13 migraciones locales/remotas, incluidas `20261028020000_add_task_scheduling_suggestions` y `20261028130644_serialize_task_scheduling_conflicts`. Esta revisión no creó, modificó ni aplicó migraciones, ni desplegó servicios.
+
+`scripts/check-task-scheduling-concurrency.mjs` abre dos conexiones PostgreSQL independientes con `postgres` 3.4.9 y una tercera coordinadora. Ambas programaciones usan `SET LOCAL ROLE authenticated`, el mismo `auth.uid()` fixture y aislamiento **READ COMMITTED**. Son conexiones SQL reales, no mocks ni dos sesiones Auth/JWT de navegador. La preparación/limpieza usa el rol administrativo temporal de la CLI, con credenciales solo en memoria, destino comprobado y TLS validado con la CA oficial de Supabase.
+
+La conexión A escribe y mantiene abierta su transacción. Antes de permitir su commit, la coordinadora comprueba PID distintos, que B espera un candado advisory de A (`pg_blocking_pids` y `pg_locks`) y que la escritura de A todavía no es visible desde otra conexión. Luego libera A: su commit se confirma y B detecta `task_schedule_overlap` (`23P01`) al continuar, dejando intacta su tarea.
+
+| Escritura A → B | Incompatibilidad | Espera de B observada | Resultado |
+| --- | --- | --- | --- |
+| RPC → RPC | Intervalos superpuestos | 3414 ms | Solo A confirma |
+| RPC → UPDATE manual | Intervalos superpuestos | 989 ms | Solo A confirma |
+| UPDATE manual → RPC | Intervalos superpuestos | 995 ms | Solo A confirma |
+| RPC → RPC | Sin superposición, separación 10 min con margen 15 | 988 ms | Solo A confirma |
+
+En la ejecución final los PID fueron 211544 y 211546. Cada escenario terminó con una sola tarea programada; después se eliminó exclusivamente el usuario aleatorio creado por el arnés y sus datos en cascada. Se comprobó cero usuarios, tareas y preferencias fixture. El recibo sin credenciales queda en `tmp/planner-race-<uuid>/result.json` (ignorado por Git).
+
+Para repetir, con la CLI ya autenticada y enlazada a Ordia:
+
+```sh
+node scripts/check-task-scheduling-concurrency.mjs
+pnpm exec supabase db query --linked --project-ref dedtyhomynsmvatfnshs --file supabase/checks/task_scheduling_guards.sql
+```
+
+La RPC y el `UPDATE` manual toman primero la fila propia y después el mismo candado transaccional del usuario. La consulta de conflictos no bloquea las filas de otras tareas. Ambas funciones son `VOLATILE` e invocadoras: bajo READ COMMITTED, la consulta posterior a la espera ve el commit ganador, como confirmó la carrera RPC/trigger. Véanse [aislamiento de PostgreSQL](https://www.postgresql.org/docs/17/transaction-iso.html), [bloqueos consultivos](https://www.postgresql.org/docs/17/explicit-locking.html#ADVISORY-LOCKS) y [visibilidad en funciones VOLATILE](https://www.postgresql.org/docs/17/xfunc-volatility.html).
+
+El alcance comprobado son operaciones sobre **una tarea por transacción** con el aislamiento predeterminado de la aplicación. No se verificaron escrituras administrativas masivas, transacciones manuales que bloqueen varias tareas en otro orden ni otros niveles de aislamiento; no se extiende la garantía a esos casos. Tampoco se bloquean cambios simultáneos en las cuentas externas. Quedan pendientes la revisión visual del planificador en celular/computador y la prueba WebSocket con dos sesiones Auth reales. En esa revisión puntual previa no hubo push ni despliegue; la entrega posterior se publica mediante la integración Git descrita al final.
 
 Para la comprobación manual, ejecuta `pnpm dev` y abre `http://localhost:5173`:
 
@@ -251,6 +331,20 @@ pnpm exec supabase db query --linked --file supabase/checks/icloud_calendar_inte
 ## Google Calendar en la agenda unificada — solo lectura
 
 La misma sección **Calendario** y **Eventos de hoy** combina los calendarios seleccionados de iCloud, Google o ambos. Cada evento identifica proveedor, calendario y color; conserva vistas diaria/semanal, todo el día y detalle de lectura. Identificadores internos incluyen proveedor, conexión, calendario e instancia: dos eventos de igual título y horario se muestran por separado. Cada proveedor tiene selección, estado, errores y última sincronización propios. **Actualizar ambos** no impide consultar una copia válida si el otro proveedor falla. Desconectar Google conserva iCloud, tareas y finanzas.
+
+### Resumen «Eventos de hoy»
+
+El resumen en la página de inicio presenta los eventos del día en `America/Bogota`:
+- Muestra únicamente eventos en curso (`starts_at <= now < ends_at`) o que todavía no hayan comenzado (`starts_at > now`), ocultando del resumen aquellos cuya hora de fin sea menor o igual a la actual (`ends_at <= now`).
+- Identifica los eventos en curso con la etiqueta «En curso» y los coloca primero, conservando todos los eventos simultáneos; después muestra los próximos ordenados por inicio.
+- Mantiene los eventos de todo el día en un grupo diferenciado durante su día correspondiente, respetando la fecha final exclusiva.
+- Incluye correctamente eventos que comenzaron el día anterior y continúan hoy.
+- Aplica una regla explícita y documentada para eventos sin fin válido sin inventar duraciones: los eventos con horario sin fin válido se tratan como puntuales (`ends_at = starts_at`), considerándose finalizados al alcanzar su hora de inicio; los eventos de todo el día sin fin válido toman como fin exclusivo el día calendario siguiente (`start_on + 1 día`).
+- Se actualiza automáticamente mientras la app permanece abierta (al menos cada minuto) y al volver del segundo plano (`focus` y `visibilitychange`), manejando también el cambio de día a medianoche.
+- El reloj local reutiliza los eventos cargados en memoria y el mecanismo de sincronización existente sin consultar a los proveedores cada minuto.
+- Si hay más de 5 eventos, los eventos en curso nunca se ocultan por el límite (se muestran todos los eventos en curso con su distintivo «En curso» aunque haya más de 5 simultáneos). El límite aplica únicamente a los eventos próximos restantes. La nota inferior informa con exactitud la cantidad visible sobre el total elegible («Mostrando N de M. Consulta el resto en Calendario»).
+- Si no quedan eventos, muestra «No tienes más eventos programados para hoy», diferenciándolo de la falta de calendarios conectados o estados de carga y error.
+- La sección **Calendario** continúa permitiendo consultar todos los eventos, incluidos los que ya terminaron.
 
 ### Autorización y privacidad
 
@@ -534,8 +628,10 @@ Al cerrar la etapa 4B pasaron `typecheck`, `lint`, **49 pruebas de Vitest en 7 a
 
 - El usuario confirmó tareas/checklist y conexiones y consultas reales de iCloud y Google. La consulta de eventos permanece en modo de lectura.
 - Se contrastaron todos los módulos locales con las funciones remotas: `icloud-calendar` y `google-calendar`, ambas **versión 5 ACTIVE**, coinciden. El cierre no vuelve a desplegarlas ni cambia secretos.
-- Las once migraciones coinciden en el proyecto **Ordia — `dedtyhomynsmvatfnshs`**. Se incluyen las cinco migraciones ya aplicadas de tareas, iCloud y Google; no se vuelven a ejecutar ni se editan.
-- La suite de cierre contiene **131 pruebas en 22 archivos**. Incluye autorización simulada completa desde `https://ordia-seven.vercel.app`, mismo callback y PKCE conservado, además de rechazo de retornos no autorizados. Esas pruebas no son un consentimiento real iniciado desde producción.
+- Las trece migraciones coinciden en el proyecto **Ordia — `dedtyhomynsmvatfnshs`**. Se incluyen las migraciones de tareas, iCloud, Google, sugerencias de horarios (`20261028020000_add_task_scheduling_suggestions.sql`) y la serialización y protección contra conflictos de concurrencia (`20261028130644_serialize_task_scheduling_conflicts.sql`); no se vuelven a ejecutar ni se editan.
+- La migración `20261028130644_serialize_task_scheduling_conflicts.sql` añade serialización a nivel de usuario con `pg_advisory_xact_lock`, trigger `validate_personal_task_schedule` contra solapamientos también en modificaciones manuales, y amplía la RPC `schedule_personal_task` para revalidar versión, duración, futuro, disponibilidad, márgenes, vencimiento vigente, otras tareas, eventos externos y cobertura/frescura. `p_accept_unverified_calendars` omite únicamente cobertura/frescura; los demás controles permanecen. La revisión puntual posterior confirmó estas reglas sin modificar la migración aplicada.
+- La suite local actual contiene **177 pruebas en 24 archivos**, cubriendo cálculo de huecos, márgenes, límites de vencimiento, tareas vencidas como reprogramación tardía, cobertura, reloj de resumen en tiempo real, eventos en curso simultáneos no truncados (>5), diálogos de disponibilidad y rechazo/confirmación de calendarios no verificados. Las cuatro carreras reales entre conexiones SQL están descritas por separado y no se cuentan como pruebas Vitest.
+- Esta entrega reúne sugerencias de horarios, protección contra conflictos, actualización temporal de «Eventos de hoy», pruebas y las dos migraciones del planificador ya aplicadas. La publicación se realiza mediante commit y push normal a `master`, seguido del despliegue automático existente de Vercel, sin despliegue manual paralelo. Antes del push se volvió a contrastar el SQL local con las 13 migraciones de Ordia (ignorando formato/comentarios), sin diferencias ni ejecución de migraciones.
 - La publicación usa `origin=https://github.com/SargDev02/Ordia.git`, rama **master**, y la integración Git de Vercel ya enlazada. El frontend solo necesita las tres variables públicas existentes. Los valores de `.env*`, `.vercel`, `.temp`, credenciales de herramientas, dependencias, compilaciones y capturas temporales quedan fuera del commit.
 - Las verificaciones HTTP y de navegador de la URL publicada se informan al terminar el despliegue. Una ruta que sirve `index.html` con `200` no demuestra por sí sola que React haya redirigido correctamente ni que OAuth haya concluido; esas comprobaciones se distinguen en la entrega.
 
@@ -546,6 +642,8 @@ Para probar esta publicación en iPhone:
 3. Abre **Calendario**, comprueba las selecciones y eventos de ambos proveedores y **Eventos de hoy**. Las conexiones existentes pertenecen al usuario y deberían recuperarse desde Supabase al iniciar sesión en otro dispositivo.
 4. Para comprobar expresamente OAuth desde producción, inicia la conexión o reconexión Google desde `https://ordia-seven.vercel.app/calendario` en Safari, con un usuario de prueba autorizado. Completa el consentimiento y verifica que vuelva exactamente al mismo dominio y conserve la sesión de Ordia. Reconectar vuelve a pedir la selección de calendarios.
 5. Confirma Día/Semana/detalle, todo el día y horas de Bogotá. Repite con dos sesiones y usuarios distintos para comprobar Realtime y privacidad; no compartas contraseñas, códigos ni tokens. La entrega Web Push sigue siendo una prueba independiente.
+6. En **Tareas → Disponibilidad**, revisa franjas y margen; crea una tarea de prueba con duración, solicita sugerencias y acepta una. Comprueba su horario en Calendario y que un conflicto conserve un mensaje claro. Una tarea vencida debe indicar reprogramación tardía y mantener su vencimiento original.
+7. En **Resumen → Eventos de hoy**, comprueba «En curso», el grupo de todo el día y los próximos. Al terminar un evento debe desaparecer del resumen en hasta 30 segundos; al volver del segundo plano debe actualizarse. El evento debe seguir disponible en Calendario. Esta comprobación autenticada en iPhone queda pendiente del dispositivo del usuario.
 
 ## Comprobación manual remota
 
