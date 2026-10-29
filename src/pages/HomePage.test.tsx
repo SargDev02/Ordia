@@ -129,6 +129,37 @@ describe('acciones financieras rápidas', () => {
     expect(screen.queryByRole('dialog', { name: 'Registrar gasto' })).not.toBeInTheDocument()
   })
 
+  it('buscar no ensucia el movimiento y Escape respeta primero el selector y después el descarte', async () => {
+    const user = userEvent.setup()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    mocks.finance.categories.push({ ...category('child', 'Restaurantes', 'expense'), parent_id: 'expense-category' })
+    renderHome()
+    const opener = screen.getByRole('button', { name: 'Registrar gasto' })
+    await user.click(opener)
+    await user.click(screen.getByLabelText('Categoría'))
+    await user.type(screen.getByRole('combobox', { name: 'Buscar categoría o subcategoría' }), 'restaurantes')
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Registrar gasto' })).toBeInTheDocument()
+    expect(confirm).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Registrar gasto' })).not.toBeInTheDocument()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(opener).toHaveFocus()
+
+    await user.click(opener)
+    await user.click(screen.getByLabelText('Categoría'))
+    await user.click(screen.getByRole('option', { name: 'Alimentación → Restaurantes' }))
+    await user.keyboard('{Escape}')
+    expect(confirm).toHaveBeenCalledWith('Tienes cambios sin guardar. ¿Quieres descartarlos?')
+    expect(screen.getByRole('dialog', { name: 'Registrar gasto' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Categoría')).toHaveTextContent('Alimentación → Restaurantes')
+    confirm.mockReturnValue(true)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Registrar gasto' })).not.toBeInTheDocument()
+    expect(mocks.createTransaction).not.toHaveBeenCalled()
+    confirm.mockRestore()
+  })
+
   it('explica que una transferencia necesita dos cuentas y facilita crear otra', async () => {
     const user = userEvent.setup()
     mocks.finance.accounts = [account('account-a', 'Principal')]

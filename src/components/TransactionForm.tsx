@@ -4,6 +4,7 @@ import { getBogotaToday, getCategoryLabel } from '../finance/calculations'
 import type { FinancialTransaction, TransactionKind } from '../types/finance'
 import { AuthNotice } from './AuthNotice'
 import { FormField } from './FormField'
+import { CategoryPicker } from './CategoryPicker'
 
 interface TransactionFormProps {
   initialKind?: TransactionKind
@@ -86,7 +87,7 @@ export function TransactionForm({ initialKind = 'expense', transaction, onCancel
         {kind === 'transfer' && <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-destination">Cuenta de destino</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" id="transaction-destination" onChange={(event) => setDestinationId(event.target.value)} value={destinationId}><option value="">Selecciona una cuenta</option>{availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.archived_at ? ' (archivada)' : ''}</option>)}</select></div>}
         <FormField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="transaction-amount" label="Importe" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
         <FormField disabled={isSubmitting} id="transaction-date" label="Fecha" onChange={(event) => setDate(event.target.value)} type="date" value={date} />
-        {kind !== 'transfer' && <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-category">Categoría</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" id="transaction-category" onChange={(event) => setCategoryId(event.target.value)} value={categoryId}><option value="">Selecciona una categoría</option>{categoryOptions.map((category) => <option key={category.id} value={category.id}>{getCategoryLabel(category.id, categories)}{category.archived_at ? ' (archivada)' : ''}</option>)}</select>{categoryOptions.length === 0 && <p className="mt-2 text-sm text-[#8b554d]">No hay categorías activas de este tipo. Crea una desde “Administrar categorías”.</p>}</div>}
+        {kind !== 'transfer' && <div className="min-w-0 sm:col-span-2"><CategoryPicker categories={categories} disabled={isSubmitting} id="transaction-category" key={kind} onChange={(id) => { if (id !== categoryId) { setCategoryId(id); markDirty() } }} options={categoryOptions} value={categoryId} />{categoryOptions.length === 0 && <p className="mt-2 text-sm text-[#8b554d]">No hay categorías activas de este tipo. Crea una desde “Administrar categorías”.</p>}</div>}
         <div className={kind === 'transfer' ? 'sm:col-span-2' : ''}><FormField disabled={isSubmitting} id="transaction-description" label="Descripción (opcional)" maxLength={240} onChange={(event) => setDescription(event.target.value)} value={description} /></div>
       </div>
       {error && <div className="mt-5"><AuthNotice tone="error">{error}</AuthNotice></div>}
