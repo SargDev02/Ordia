@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { useFinance } from '../finance/useFinance'
 import type { FinancialCategory } from '../types/finance'
 import { AuthNotice } from './AuthNotice'
+import { CategoryPicker } from './CategoryPicker'
 
 interface CategoryManagerProps {
   onClose: () => void
@@ -19,9 +20,9 @@ export function CategoryManager({ onClose, onDirtyChange }: CategoryManagerProps
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const activeParents = useMemo(() => finance.categories.filter((category) =>
-    category.kind === kind && !category.parent_id && !category.archived_at,
-  ), [finance.categories, kind])
+  const activeParents = useMemo(() => finance.categories
+    .filter((category) => category.kind === kind && !category.parent_id && !category.archived_at)
+    .sort((a, b) => a.name.localeCompare(b.name, 'es')), [finance.categories, kind])
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault()
@@ -105,7 +106,26 @@ export function CategoryManager({ onClose, onDirtyChange }: CategoryManagerProps
         <h3 className="font-semibold text-[#264a3c]">Crear categoría</h3>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="category-kind">Tipo</label><select className="w-full rounded-xl border border-[#d6e1d3] bg-white px-3 py-3" data-dialog-initial-focus id="category-kind" onChange={(event) => { setKind(event.target.value as 'income' | 'expense'); setParentId('') }} value={kind}><option value="expense">Gasto</option><option value="income">Ingreso</option></select></div>
-          <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="category-parent">Nivel</label><select className="w-full rounded-xl border border-[#d6e1d3] bg-white px-3 py-3" id="category-parent" onChange={(event) => setParentId(event.target.value)} value={parentId}><option value="">Categoría principal</option>{activeParents.map((category) => <option key={category.id} value={category.id}>Subcategoría de {category.name}</option>)}</select></div>
+          <CategoryPicker
+            categories={finance.categories}
+            clearLabel="Usar categoría principal"
+            disabled={isSubmitting}
+            formatOptionLabel={(_category, path) => `Subcategoría de ${path}`}
+            id="category-parent"
+            key={kind}
+            label="Nivel"
+            leadingOptions={[{ id: '', label: 'Categoría principal', search: 'categoria principal raiz' }]}
+            onChange={(id) => {
+              if (id !== parentId) {
+                setParentId(id)
+                markDirty()
+              }
+            }}
+            options={activeParents}
+            placeholder="Categoría principal"
+            searchLabel="Buscar categoría principal"
+            value={parentId}
+          />
           <div className="sm:col-span-2"><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="category-name">Nombre</label><input className="w-full rounded-xl border border-[#d6e1d3] bg-white px-3 py-3" id="category-name" maxLength={60} onChange={(event) => setName(event.target.value)} value={name} /></div>
         </div>
         <button className="mt-4 rounded-xl bg-[#173f31] px-4 py-3 font-semibold text-white disabled:opacity-60" disabled={isSubmitting} type="submit">{isSubmitting ? 'Guardando…' : 'Crear categoría'}</button>

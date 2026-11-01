@@ -1,5 +1,22 @@
 import { supabase } from './supabase'
-import type { AccountInput, CategoryInput, FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpenseInput, FixedExpensePaymentInput, FixedExpensePeriod, FixedExpenseVersion, TransactionInput } from '../types/finance'
+import type {
+  AccountInput,
+  BankCardAccountLink,
+  BankNotification,
+  CategoryInput,
+  ConfirmNotificationTransactionInput,
+  ConfirmNotificationTransferInput,
+  CreateBankNotificationInput,
+  FinancialAccount,
+  FinancialCategory,
+  FinancialTransaction,
+  FixedExpense,
+  FixedExpenseInput,
+  FixedExpensePaymentInput,
+  FixedExpensePeriod,
+  FixedExpenseVersion,
+  TransactionInput,
+} from '../types/finance'
 
 function client() {
   if (!supabase) throw new Error('Supabase no está configurado.')
@@ -10,6 +27,17 @@ function fail(message: string): never {
   throw new Error(message)
 }
 
+export function isMissingBankInboxSchemaError(
+  error: { code?: string; message?: string; details?: string } | null | undefined,
+): boolean {
+  if (!error) return false
+  if (error.code === '42P01' || error.code === '42883' || error.code === 'PGRST205' || error.code === 'PGRST202') {
+    return true
+  }
+  const combined = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
+  return combined.includes('does not exist') || combined.includes('schema cache')
+}
+
 export async function fetchFinanceData() {
   const api = client()
   const defaultsResult = await api.rpc('ensure_default_financial_categories')
@@ -17,19 +45,42 @@ export async function fetchFinanceData() {
   const generationResult = await api.rpc('generate_fixed_expense_periods', { p_horizon_months: 3 })
   if (generationResult.error) fail('No pudimos actualizar los períodos de tus gastos fijos.')
 
-  const [accountsResult, categoriesResult, transactionsResult, fixedExpensesResult, fixedExpenseVersionsResult, fixedExpensePeriodsResult] = await Promise.all([
+  const [
+    accountsResult,
+    categoriesResult,
+    transactionsResult,
+    fixedExpensesResult,
+    fixedExpenseVersionsResult,
+    fixedExpensePeriodsResult,
+    bankNotificationsResult,
+    cardLinksResult,
+  ] = await Promise.all([
     api.from('financial_accounts').select('*').order('created_at'),
     api.from('financial_categories').select('*').order('kind').order('parent_id', { nullsFirst: true }).order('name'),
     api.from('financial_transactions').select('*').is('deleted_at', null).order('occurred_on', { ascending: false }).order('created_at', { ascending: false }),
     api.from('fixed_expenses').select('*').order('created_at'),
     api.from('fixed_expense_versions').select('*').order('effective_from'),
     api.from('fixed_expense_periods').select('*').order('due_date'),
+    api.from('bank_notifications').select('*').order('occurred_on', { ascending: false }).order('occurred_time', { ascending: false }),
+    api.from('bank_card_account_links').select('*'),
   ])
 
   if (accountsResult.error) fail('No pudimos cargar tus cuentas.')
   if (categoriesResult.error) fail('No pudimos cargar tus categorías.')
   if (transactionsResult.error) fail('No pudimos cargar tus movimientos.')
   if (fixedExpensesResult.error || fixedExpenseVersionsResult.error || fixedExpensePeriodsResult.error) fail('No pudimos cargar tus gastos fijos.')
+
+  const missingNotificationsSchema = isMissingBankInboxSchemaError(bankNotificationsResult.error)
+  const missingLinksSchema = isMissingBankInboxSchemaError(cardLinksResult.error)
+
+  if (bankNotificationsResult.error && !missingNotificationsSchema) {
+    fail('No pudimos cargar tus avisos bancarios.')
+  }
+  if (cardLinksResult.error && !missingLinksSchema) {
+    fail('No pudimos cargar los enlaces de tarjetas.')
+  }
+
+  const bankInboxAvailable = !missingNotificationsSchema && !missingLinksSchema
 
   return {
     accounts: accountsResult.data as FinancialAccount[],
@@ -38,6 +89,9 @@ export async function fetchFinanceData() {
     fixedExpenses: fixedExpensesResult.data as FixedExpense[],
     fixedExpenseVersions: fixedExpenseVersionsResult.data as FixedExpenseVersion[],
     fixedExpensePeriods: fixedExpensePeriodsResult.data as FixedExpensePeriod[],
+    bankInboxAvailable,
+    bankNotifications: bankInboxAvailable ? ((bankNotificationsResult.data ?? []) as BankNotification[]) : [],
+    cardAccountLinks: bankInboxAvailable ? ((cardLinksResult.data ?? []) as BankCardAccountLink[]) : [],
   }
 }
 
@@ -160,4 +214,121 @@ export async function updateTransaction(transactionId: string, input: Transactio
 export async function deleteTransaction(transactionId: string) {
   const { error } = await client().from('financial_transactions').update({ deleted_at: new Date().toISOString() }).eq('id', transactionId)
   if (error) fail('No pudimos eliminar el movimiento.')
+}
+
+export async function createBankNotification(requestId: string, input: CreateBankNotificationInput): Promise<BankNotification> {
+  const { data, error } = await client().rpc('create_bank_notification', {
+    p_account_last_digits: input.account_last_digits ?? null,
+    p_amount: input.amount,
+    p_bank_name: input.bank_name ?? 'Bancolombia',
+    p_card_last_digits: input.card_last_digits ?? null,
+    p_card_type: input.card_type ?? null,
+    p_counterparty_account_last_digits: input.counterparty_account_last_digits ?? null,
+    p_counterparty_name: input.counterparty_name ?? null,
+    p_merchant: input.merchant ?? null,
+    p_notification_type: input.notification_type,
+    p_occurred_on: input.occurred_on,
+    p_occurred_time: input.occurred_time,
+    p_request_id: requestId,
+    p_source_channel: input.source_channel ?? 'manual',
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La bandeja «Movimientos por revisar» no está disponible porque falta instalar su migración en la base de datos. No se guardó ningún pendiente.')
+  }
+  if (error) fail('No pudimos guardar el aviso bancario pendiente.')
+  const created = data as BankNotification | null
+  if (!created || typeof created.id !== 'string' || !created.id) {
+    fail('No recibimos confirmación del servidor. No se guardó ningún pendiente.')
+  }
+  return created
+}
+
+export async function confirmBankNotificationAsTransaction(
+  notificationId: string,
+  requestId: string,
+  input: ConfirmNotificationTransactionInput,
+) {
+  const { data, error } = await client().rpc('confirm_bank_notification_as_transaction', {
+    p_account_id: input.account_id,
+    p_category_id: input.category_id,
+    p_description: input.description,
+    p_identifier_type: input.identifier_type ?? null,
+    p_kind: input.kind,
+    p_last_digits: input.last_digits ?? null,
+    p_notification_id: notificationId,
+    p_occurred_on: input.occurred_on,
+    p_remember_link: input.remember_link ?? false,
+    p_request_id: requestId,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La bandeja «Movimientos por revisar» no está disponible en la base de datos. No se registró el movimiento.')
+  }
+  if (error) fail(error.message || 'No pudimos registrar el movimiento desde el aviso.')
+  const created = data as FinancialTransaction | null
+  if (!created || typeof created.id !== 'string') {
+    fail('No recibimos confirmación del movimiento registrado.')
+  }
+}
+
+export async function confirmBankNotificationAsTransfer(
+  notificationId: string,
+  requestId: string,
+  input: ConfirmNotificationTransferInput,
+) {
+  const { data, error } = await client().rpc('confirm_bank_notification_as_transfer', {
+    p_account_id: input.account_id,
+    p_description: input.description,
+    p_destination_account_id: input.destination_account_id,
+    p_identifier_type: input.identifier_type ?? null,
+    p_last_digits: input.last_digits ?? null,
+    p_notification_id: notificationId,
+    p_occurred_on: input.occurred_on,
+    p_remember_link: input.remember_link ?? false,
+    p_request_id: requestId,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La bandeja «Movimientos por revisar» no está disponible en la base de datos. No se registró la transferencia.')
+  }
+  if (error) fail(error.message || 'No pudimos registrar la transferencia desde el aviso.')
+  const created = data as FinancialTransaction | null
+  if (!created || typeof created.id !== 'string') {
+    fail('No recibimos confirmación de la transferencia registrada.')
+  }
+}
+
+export async function linkBankNotificationToTransaction(notificationId: string, transactionId: string) {
+  const { error } = await client().rpc('link_bank_notification_to_transaction', {
+    p_notification_id: notificationId,
+    p_transaction_id: transactionId,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La bandeja «Movimientos por revisar» no está disponible en la base de datos. No se vinculó el aviso.')
+  }
+  if (error) fail(error.message || 'No pudimos vincular el aviso al movimiento.')
+}
+
+export async function dismissBankNotification(notificationId: string) {
+  const { error } = await client().rpc('dismiss_bank_notification', {
+    p_notification_id: notificationId,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La bandeja «Movimientos por revisar» no está disponible en la base de datos. No se descartó el aviso.')
+  }
+  if (error) fail(error.message || 'No pudimos descartar el aviso.')
+}
+
+export async function saveCardAccountLink(
+  identifierType: 'card' | 'account',
+  lastDigits: string,
+  accountId: string,
+) {
+  const { error } = await client().rpc('upsert_card_account_link', {
+    p_account_id: accountId,
+    p_identifier_type: identifierType,
+    p_last_digits: lastDigits,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La bandeja «Movimientos por revisar» no está disponible en la base de datos.')
+  }
+  if (error) fail(error.message || 'No pudimos guardar la asociación de tarjeta o cuenta.')
 }

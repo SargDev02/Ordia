@@ -33,7 +33,8 @@ export function TaskEditor({ task, onClose }: { task?: PersonalTask; onClose: ()
     if (submitting.current) return
     setError('')
     if (!title.trim()) return setError('Escribe un título para la tarea.')
-    const duration = minutes === '' ? null : Number(minutes)
+    const cleanMinutes = minutes.trim()
+    const duration = cleanMinutes === '' ? null : (/^\d+$/.test(cleanMinutes) ? Number(cleanMinutes) : Number.NaN)
     if (duration !== null && (!Number.isInteger(duration) || duration <= 0 || duration > 1000000)) return setError('La duración debe ser un número entero de minutos entre 1 y 1.000.000.')
     submitting.current = true
     setBusy(true)
@@ -53,7 +54,7 @@ export function TaskEditor({ task, onClose }: { task?: PersonalTask; onClose: ()
         <div className="sm:col-span-2"><FormField data-dialog-initial-focus id="task-title" label="Título" maxLength={200} required value={title} onChange={(event) => setTitle(event.target.value)} /></div>
         <div className="sm:col-span-2"><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="task-description">Descripción (opcional)</label><textarea className={control} id="task-description" maxLength={5000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} /></div>
         <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="task-priority">Prioridad</label><select className={control} id="task-priority" value={priority} onChange={(event) => setPriority(event.target.value as TaskPriority)}>{Object.entries(TASK_PRIORITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
-        <FormField id="task-minutes" label="Duración estimada (minutos, opcional)" min={1} max={1000000} step={1} type="number" value={minutes} onChange={(event) => setMinutes(event.target.value)} />
+        <FormField id="task-minutes" inputMode="numeric" label="Duración estimada (minutos, opcional)" min={1} max={1000000} step={1} type="number" value={minutes} onChange={(event) => setMinutes(event.target.value)} />
         <div className="min-w-0"><FormField id="task-due" label="Vencimiento (opcional)" hint="Fecha límite para terminar. Vence al finalizar ese día en Bogotá." type="date" min="1900-01-01" max="9999-12-31" value={dueOn} onChange={(event) => setDueOn(event.target.value)} /></div>
         <div className="min-w-0"><FormField id="task-scheduled" label="Programación (opcional)" hint="Momento en que planeas trabajar. Hora de America/Bogota (UTC−5)." type="datetime-local" min="1900-01-01T00:00" max="9999-12-31T23:59" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} /></div>
       </fieldset>

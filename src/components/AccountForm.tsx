@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { useFinance } from '../finance/useFinance'
 import type { AccountType, FinancialAccount } from '../types/finance'
 import { AuthNotice } from './AuthNotice'
@@ -18,16 +18,35 @@ export function AccountForm({ account, onCancel, onDirtyChange, onSaved }: Accou
   const [initialBalance, setInitialBalance] = useState(String(account?.initial_balance ?? 0))
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const balanceInputRef = useRef<HTMLInputElement>(null)
+
+  const isNegativeBalance = initialBalance.trim().startsWith('-')
 
   function markDirty() {
     onDirtyChange(true)
   }
 
+  function toggleInitialBalanceSign() {
+    markDirty()
+    setInitialBalance((prev) => {
+      const trimmed = prev.trim()
+      if (!trimmed || trimmed === '0') return '-'
+      if (trimmed === '-') return '0'
+      return trimmed.startsWith('-') ? trimmed.slice(1) : `-${trimmed}`
+    })
+    balanceInputRef.current?.focus()
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
-    const amount = Number(initialBalance)
+    const rawBalance = initialBalance.trim()
     if (!name.trim()) return setError('Escribe un nombre para la cuenta.')
+    if (!rawBalance || !/^-?\d+$/.test(rawBalance)) {
+      return setError('El saldo inicial debe ser un número entero válido en pesos.')
+    }
+    const parsed = Number(rawBalance)
+    const amount = Object.is(parsed, -0) ? 0 : parsed
     if (!Number.isSafeInteger(amount) || Math.abs(amount) > 9_000_000_000_000) {
       return setError('El saldo inicial debe ser un número entero válido en pesos.')
     }
@@ -60,7 +79,41 @@ export function AccountForm({ account, onCancel, onDirtyChange, onSaved }: Accou
           </select>
         </div>
         <FormField disabled id="account-currency" label="Moneda" value="COP" />
-        <div className="sm:col-span-2"><FormField disabled={isSubmitting} hint="Puede ser cero. En esta versión se registran pesos enteros." id="account-initial-balance" label="Saldo inicial" onChange={(event) => setInitialBalance(event.target.value)} step="1" type="number" value={initialBalance} /></div>
+        <div className="sm:col-span-2">
+          <label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="account-initial-balance">
+            Saldo inicial
+          </label>
+          <div className="flex items-stretch gap-2">
+            <button
+              aria-label="Cambiar signo del saldo inicial"
+              aria-pressed={isNegativeBalance}
+              className={`min-h-12 shrink-0 rounded-2xl border px-3.5 text-sm font-semibold transition ${
+                isNegativeBalance
+                  ? 'border-[#e8d1cc] bg-[#f8ece8] text-[#8b463d]'
+                  : 'border-[#d6e1d3] bg-[#f8faf6] text-[#315c49] hover:bg-[#edf3ea]'
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+              disabled={isSubmitting}
+              onClick={toggleInitialBalanceSign}
+              type="button"
+            >
+              ± Signo
+            </button>
+            <input
+              autoComplete="off"
+              className="min-w-0 flex-1 rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5 text-base text-[#173f31] outline-none transition placeholder:text-[#9aa9a1] focus:border-[#4f8068] focus:ring-4 focus:ring-[#4f8068]/10 disabled:cursor-not-allowed disabled:bg-[#f0f3ed]"
+              disabled={isSubmitting}
+              id="account-initial-balance"
+              inputMode="numeric"
+              onChange={(event) => setInitialBalance(event.target.value)}
+              ref={balanceInputRef}
+              type="text"
+              value={initialBalance}
+            />
+          </div>
+          <p className="mt-2 text-xs leading-5 text-[#718279]">
+            Puede ser cero, positivo o negativo (usa «± Signo» en el celular). Se registran pesos enteros.
+          </p>
+        </div>
       </div>
       {error && <div className="mt-5"><AuthNotice tone="error">{error}</AuthNotice></div>}
       <div className="mt-6 flex justify-end"><button className="rounded-2xl bg-[#173f31] px-5 py-3 font-semibold text-white disabled:opacity-60" disabled={isSubmitting} type="submit">{isSubmitting ? 'Guardando…' : 'Guardar cuenta'}</button></div>

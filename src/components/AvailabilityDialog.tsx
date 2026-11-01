@@ -15,7 +15,7 @@ export function AvailabilityDialog({ userId, preferences, onSave, onClose }: Ava
   const [slots, setSlots] = useState<AvailabilitySlot[]>(
     preferences?.slots && preferences.slots.length > 0 ? preferences.slots : DEFAULT_AVAILABILITY_SLOTS,
   )
-  const [bufferMinutes, setBufferMinutes] = useState(preferences?.buffer_minutes ?? 15)
+  const [bufferMinutesInput, setBufferMinutesInput] = useState(String(preferences?.buffer_minutes ?? 15))
   const [allDayBlocks, setAllDayBlocks] = useState(preferences?.all_day_blocks ?? true)
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -83,11 +83,17 @@ export function AvailabilityDialog({ userId, preferences, onSave, onClose }: Ava
       return setError(validationError)
     }
 
+    const cleanBuffer = bufferMinutesInput.trim()
+    const parsedBuffer = /^\d+$/.test(cleanBuffer) ? Number(cleanBuffer) : Number.NaN
+    if (!Number.isInteger(parsedBuffer) || parsedBuffer < 0 || parsedBuffer > 120) {
+      return setError('El margen de descanso debe ser un número entero entre 0 y 120 minutos.')
+    }
+
     setBusy(true)
     try {
       await onSave({
         user_id: userId,
-        buffer_minutes: bufferMinutes,
+        buffer_minutes: parsedBuffer,
         all_day_blocks: allDayBlocks,
         slots,
       })
@@ -225,23 +231,47 @@ export function AvailabilityDialog({ userId, preferences, onSave, onClose }: Ava
               Margen de descanso entre compromisos
             </label>
             <p className="mt-1 text-xs text-[#66796f]">
-              Tiempo libre que se deja antes y después de cada evento o tarea.
+              Tiempo libre en minutos enteros (0 a 120) antes y después de cada evento o tarea.
             </p>
-            <select
-              className="mt-2 min-h-11 rounded-xl border border-[#d6e1d3] bg-white px-3 text-sm text-[#173f31]"
-              id="buffer-minutes"
-              onChange={(e) => {
-                setDirty(true)
-                setBufferMinutes(Number(e.target.value))
-              }}
-              value={bufferMinutes}
-            >
-              <option value={0}>Sin margen (0 minutos)</option>
-              <option value={5}>5 minutos</option>
-              <option value={10}>10 minutos</option>
-              <option value={15}>15 minutos (recomendado)</option>
-              <option value={30}>30 minutos</option>
-            </select>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                className="min-h-11 w-28 rounded-xl border border-[#d6e1d3] bg-white px-3 text-sm text-[#173f31]"
+                id="buffer-minutes"
+                inputMode="numeric"
+                max={120}
+                min={0}
+                onChange={(e) => {
+                  setDirty(true)
+                  setError('')
+                  setBufferMinutesInput(e.target.value)
+                }}
+                step={1}
+                type="number"
+                value={bufferMinutesInput}
+              />
+              <span className="text-xs text-[#66796f]">minutos</span>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Valores rápidos de margen">
+                {[0, 5, 10, 15, 30].map((preset) => (
+                  <button
+                    key={preset}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+                      bufferMinutesInput.trim() === String(preset)
+                        ? 'border-[#173f31] bg-[#173f31] text-white'
+                        : 'border-[#d6e1d3] bg-white text-[#315c49]'
+                    }`}
+                    disabled={busy}
+                    onClick={() => {
+                      setDirty(true)
+                      setError('')
+                      setBufferMinutesInput(String(preset))
+                    }}
+                    type="button"
+                  >
+                    {preset} min
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <label className="flex items-start gap-3 text-sm text-[#264a3c]">

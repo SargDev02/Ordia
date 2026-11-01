@@ -3,6 +3,7 @@ import { getBogotaToday, getCategoryLabel } from '../finance/calculations'
 import { useFinance } from '../finance/useFinance'
 import type { FixedExpense, FixedExpenseFrequency, FixedExpenseVersion } from '../types/finance'
 import { AuthNotice } from './AuthNotice'
+import { CategoryPicker } from './CategoryPicker'
 import { FormField } from './FormField'
 
 interface Props {
@@ -36,7 +37,8 @@ export function FixedExpenseForm({ expense, version, onCancel, onDirtyChange, on
   async function submit(event: FormEvent) {
     event.preventDefault()
     setError('')
-    const parsedAmount = Number(amount)
+    const cleanAmount = amount.trim()
+    const parsedAmount = /^\d+$/.test(cleanAmount) ? Number(cleanAmount) : Number.NaN
     if (!name.trim()) return setError('Escribe un nombre.')
     if (!Number.isSafeInteger(parsedAmount) || parsedAmount <= 0 || parsedAmount > 9_000_000_000_000) return setError('El importe debe ser un número entero positivo en pesos.')
     if (!categoryId || !categories.some((item) => item.id === categoryId)) return setError('Selecciona una categoría activa.')
@@ -60,8 +62,21 @@ export function FixedExpenseForm({ expense, version, onCancel, onDirtyChange, on
       <div className="mb-6 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#4f8068]">{expense ? 'Editar configuración' : 'Nueva recurrencia'}</p><h3 className="mt-2 text-2xl font-semibold text-[#173f31]">{expense ? expense.name : 'Gasto fijo'}</h3></div><button className="text-sm font-semibold text-[#66796f]" disabled={isSubmitting} onClick={onCancel} type="button">Cerrar</button></div>
       <div className="grid gap-5 sm:grid-cols-2">
         <div className="sm:col-span-2"><FormField data-dialog-initial-focus disabled={isSubmitting} id="fixed-name" label="Nombre" maxLength={120} onChange={(event) => setName(event.target.value)} value={name} /></div>
-        <FormField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="fixed-amount" label="Importe previsto (COP)" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
-        <SelectField id="fixed-category" label="Categoría o subcategoría" value={categoryId} onChange={setCategoryId}><option value="">Selecciona una categoría</option>{categories.map((category) => <option key={category.id} value={category.id}>{getCategoryLabel(category.id, finance.categories)}</option>)}</SelectField>
+        <FormField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="fixed-amount" inputMode="numeric" label="Importe previsto (COP)" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
+        <CategoryPicker
+          categories={finance.categories}
+          disabled={isSubmitting}
+          id="fixed-category"
+          label="Categoría o subcategoría"
+          onChange={(id) => {
+            if (id !== categoryId) {
+              setCategoryId(id)
+              onDirtyChange(true)
+            }
+          }}
+          options={categories}
+          value={categoryId}
+        />
         <SelectField id="fixed-account" label="Cuenta sugerida (opcional)" value={accountId} onChange={setAccountId}><option value="">Elegir al pagar</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</SelectField>
         <SelectField id="fixed-frequency" label="Frecuencia" value={frequency} onChange={(value) => setFrequency(value as FixedExpenseFrequency)}><option value="monthly">Mensual</option><option value="annual">Anual</option></SelectField>
         <FormField disabled={isSubmitting} id="fixed-anchor" label={expense ? 'Fecha base del calendario' : 'Primer vencimiento'} onChange={(event) => setAnchorDate(event.target.value)} type="date" value={anchorDate} />

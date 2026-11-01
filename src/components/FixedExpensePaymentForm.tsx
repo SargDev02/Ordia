@@ -4,6 +4,7 @@ import { getBogotaToday, getCategoryLabel } from '../finance/calculations'
 import { useFinance } from '../finance/useFinance'
 import type { FixedExpense, FixedExpensePeriod } from '../types/finance'
 import { AuthNotice } from './AuthNotice'
+import { CategoryPicker } from './CategoryPicker'
 import { FormField } from './FormField'
 
 export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChange, onSaved }: { expense: FixedExpense; period: FixedExpensePeriod; onCancel: () => void; onDirtyChange: (dirty: boolean) => void; onSaved: () => void }) {
@@ -22,7 +23,8 @@ export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChan
   async function submit(event: FormEvent) {
     event.preventDefault()
     setError('')
-    const parsed = Number(amount)
+    const cleanAmount = amount.trim()
+    const parsed = /^\d+$/.test(cleanAmount) ? Number(cleanAmount) : Number.NaN
     if (!accountId) return setError('Selecciona una cuenta activa.')
     if (!categoryId) return setError('Selecciona una categoría activa.')
     if (!paidOn) return setError('Selecciona la fecha real del pago.')
@@ -41,8 +43,21 @@ export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChan
     <div className="grid gap-5 sm:grid-cols-2">
       <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="payment-account">Cuenta</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" data-dialog-initial-focus id="payment-account" onChange={(event) => setAccountId(event.target.value)} value={accountId}><option value="">Selecciona una cuenta</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
       <FormField disabled={isSubmitting} id="payment-date" label="Fecha real del pago" onChange={(event) => setPaidOn(event.target.value)} type="date" value={paidOn} />
-      <FormField disabled={isSubmitting} hint={`Previsto: ${period.expected_amount.toLocaleString('es-CO')} COP. Puede ser diferente.`} id="payment-amount" label="Importe pagado (COP)" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
-      <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="payment-category">Categoría</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" id="payment-category" onChange={(event) => setCategoryId(event.target.value)} value={categoryId}><option value="">Selecciona una categoría</option>{categories.map((category) => <option key={category.id} value={category.id}>{getCategoryLabel(category.id, finance.categories)}</option>)}</select></div>
+      <FormField disabled={isSubmitting} hint={`Previsto: ${period.expected_amount.toLocaleString('es-CO')} COP. Puede ser diferente.`} id="payment-amount" inputMode="numeric" label="Importe pagado (COP)" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
+      <CategoryPicker
+        categories={finance.categories}
+        disabled={isSubmitting}
+        id="payment-category"
+        label="Categoría"
+        onChange={(id) => {
+          if (id !== categoryId) {
+            setCategoryId(id)
+            onDirtyChange(true)
+          }
+        }}
+        options={categories}
+        value={categoryId}
+      />
     </div>
     {accounts.length === 0 && <div className="mt-5"><AuthNotice tone="error">Necesitas una cuenta activa para registrar el pago.</AuthNotice><Link className="mt-3 inline-flex text-sm font-semibold text-[#346a52] underline underline-offset-2" to="/">Ir al resumen para crear una cuenta</Link></div>}
     {(!categories.some((item) => item.id === period.category_id) || (period.suggested_account_id && !accounts.some((item) => item.id === period.suggested_account_id))) && <div className="mt-5"><AuthNotice tone="error">La categoría o cuenta sugerida fue archivada. Selecciona una opción activa para continuar.</AuthNotice></div>}

@@ -158,15 +158,61 @@ describe('gastos fijos', () => {
     expect(within(screen.getByRole('dialog', { name: 'Detalle de Internet' })).getByText(/Dado de baja/)).toBeInTheDocument()
   })
 
-  it('precarga el pago y lo registra con el flujo dedicado', async () => {
+  it('precarga el pago con teclado numérico, permite buscar otra categoría y registra el importe exacto', async () => {
+    const workCategory: FinancialCategory = { archived_at: null, created_at: '', id: 'category-work', kind: 'expense', name: 'Trabajo', parent_id: null, updated_at: '', user_id: 'user-a' }
+    const phoneServices: FinancialCategory = { archived_at: null, created_at: '', id: 'sub-services-phone', kind: 'expense', name: 'Telefonía', parent_id: category.id, updated_at: '', user_id: 'user-a' }
+    const phoneWork: FinancialCategory = { archived_at: null, created_at: '', id: 'sub-work-phone', kind: 'expense', name: 'Telefonía', parent_id: workCategory.id, updated_at: '', user_id: 'user-a' }
+    mocks.data.categories = [category, workCategory, phoneServices, phoneWork]
+
     const user = userEvent.setup(); renderPage()
     await user.click(screen.getByRole('button', { name: 'Marcar como pagado' }))
     const dialog = screen.getByRole('dialog', { name: 'Registrar pago' })
     expect(within(dialog).getByLabelText('Cuenta')).toHaveValue(account.id)
-    expect(within(dialog).getByLabelText('Importe pagado (COP)')).toHaveValue(90000)
+    const paidAmountInput = within(dialog).getByLabelText('Importe pagado (COP)')
+    expect(paidAmountInput).toHaveAttribute('inputmode', 'numeric')
+    expect(paidAmountInput).toHaveValue(90000)
+
+    await user.clear(paidAmountInput)
+    await user.type(paidAmountInput, '92500')
+
+    await user.click(within(dialog).getByLabelText('Categoría'))
+    const search = within(dialog).getByRole('combobox', { name: 'Buscar categoría o subcategoría' })
+    await user.type(search, 'telefonia')
+    await user.click(within(dialog).getByRole('option', { name: 'Trabajo → Telefonía' }))
+
     await user.click(within(dialog).getByRole('button', { name: 'Registrar pago' }))
-    await waitFor(() => expect(mocks.pay).toHaveBeenCalledWith(period.id, expect.any(String), expect.objectContaining({ account_id: account.id, amount: 90000, category_id: category.id })))
+    await waitFor(() => expect(mocks.pay).toHaveBeenCalledWith(period.id, expect.any(String), expect.objectContaining({ account_id: account.id, amount: 92500, category_id: 'sub-work-phone' })))
     expect(screen.queryByRole('dialog', { name: 'Registrar pago' })).not.toBeInTheDocument()
+  })
+
+  it('permite crear un gasto fijo con teclado numérico y buscando subcategoría por texto', async () => {
+    const phoneSub: FinancialCategory = { archived_at: null, created_at: '', id: 'sub-phone', kind: 'expense', name: 'Telefonía hogar', parent_id: category.id, updated_at: '', user_id: 'user-a' }
+    mocks.data.categories = [category, phoneSub]
+    mocks.create.mockResolvedValue(undefined)
+
+    const user = userEvent.setup(); renderPage()
+    await user.click(screen.getByRole('button', { name: 'Nuevo gasto fijo' }))
+    const dialog = screen.getByRole('dialog', { name: 'Nuevo gasto fijo' })
+
+    await user.type(within(dialog).getByLabelText('Nombre'), 'Plan fibra y voz')
+    const expectedAmountInput = within(dialog).getByLabelText('Importe previsto (COP)')
+    expect(expectedAmountInput).toHaveAttribute('inputmode', 'numeric')
+    await user.type(expectedAmountInput, '115000')
+
+    await user.click(within(dialog).getByLabelText('Categoría o subcategoría'))
+    const search = within(dialog).getByRole('combobox', { name: 'Buscar categoría o subcategoría' })
+    await user.type(search, 'telefonia hogar')
+    await user.click(within(dialog).getByRole('option', { name: 'Servicios → Telefonía hogar' }))
+
+    await user.click(within(dialog).getByRole('button', { name: 'Crear gasto fijo' }))
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        name: 'Plan fibra y voz',
+        expected_amount: 115000,
+        category_id: 'sub-phone',
+      }),
+    ))
   })
 
   it('conserva cambios del formulario si se rechaza descartarlos', async () => {

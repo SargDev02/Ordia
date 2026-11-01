@@ -4,23 +4,38 @@ import { supabase } from '../services/supabase'
 import {
   archiveAccount as archiveAccountRequest,
   archiveCategory as archiveCategoryRequest,
+  confirmBankNotificationAsTransaction as confirmBankNotificationAsTransactionRequest,
+  confirmBankNotificationAsTransfer as confirmBankNotificationAsTransferRequest,
   createAccount as createAccountRequest,
+  createBankNotification as createBankNotificationRequest,
   createCategory as createCategoryRequest,
   createTransaction as createTransactionRequest,
   createFixedExpense as createFixedExpenseRequest,
   deleteTransaction as deleteTransactionRequest,
+  dismissBankNotification as dismissBankNotificationRequest,
   fetchFinanceData,
+  linkBankNotificationToTransaction as linkBankNotificationToTransactionRequest,
   pauseFixedExpense as pauseFixedExpenseRequest,
   payFixedExpensePeriod as payFixedExpensePeriodRequest,
   reactivateFixedExpense as reactivateFixedExpenseRequest,
   removeFixedExpense as removeFixedExpenseRequest,
   renameCategory as renameCategoryRequest,
+  saveCardAccountLink as saveCardAccountLinkRequest,
   updateAccount as updateAccountRequest,
   updateTransaction as updateTransactionRequest,
   updateFixedExpense as updateFixedExpenseRequest,
   undoFixedExpensePayment as undoFixedExpensePaymentRequest,
 } from '../services/finance'
-import type { FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpensePeriod, FixedExpenseVersion } from '../types/finance'
+import type {
+  BankCardAccountLink,
+  BankNotification,
+  FinancialAccount,
+  FinancialCategory,
+  FinancialTransaction,
+  FixedExpense,
+  FixedExpensePeriod,
+  FixedExpenseVersion,
+} from '../types/finance'
 import { FinanceContext, type FinanceContextValue, type RealtimeStatus } from './finance-context'
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
@@ -32,6 +47,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([])
   const [fixedExpensePeriods, setFixedExpensePeriods] = useState<FixedExpensePeriod[]>([])
   const [fixedExpenseVersions, setFixedExpenseVersions] = useState<FixedExpenseVersion[]>([])
+  const [bankInboxAvailable, setBankInboxAvailable] = useState(true)
+  const [bankNotifications, setBankNotifications] = useState<BankNotification[]>([])
+  const [cardAccountLinks, setCardAccountLinks] = useState<BankCardAccountLink[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
@@ -51,6 +69,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       setFixedExpenses(data.fixedExpenses)
       setFixedExpensePeriods(data.fixedExpensePeriods)
       setFixedExpenseVersions(data.fixedExpenseVersions)
+      setBankInboxAvailable(data.bankInboxAvailable)
+      setBankNotifications(data.bankNotifications)
+      setCardAccountLinks(data.cardAccountLinks)
       setError('')
     } catch (caught) {
       if (sequence !== loadSequence.current) return
@@ -88,6 +109,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expense_versions', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fixed_expense_periods', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expense_periods', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bank_notifications', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bank_notifications', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('connected')
@@ -120,6 +146,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     isLoading,
     realtimeStatus,
     transactions,
+    bankInboxAvailable,
+    bankNotifications,
+    cardAccountLinks,
     refresh,
     createAccount: (input) => runAndRefresh(() => createAccountRequest(userId, input)),
     updateAccount: (accountId, input) => runAndRefresh(() => updateAccountRequest(accountId, input)),
@@ -137,7 +166,23 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     undoFixedExpensePayment: (periodId) => runAndRefresh(() => undoFixedExpensePaymentRequest(periodId)),
     updateTransaction: (transactionId, input) => runAndRefresh(() => updateTransactionRequest(transactionId, input)),
     deleteTransaction: (transactionId) => runAndRefresh(() => deleteTransactionRequest(transactionId)),
-  }), [accounts, categories, error, fixedExpensePeriods, fixedExpenseVersions, fixedExpenses, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId])
+    createBankNotification: async (input) => {
+      setError('')
+      const result = await createBankNotificationRequest(crypto.randomUUID(), input)
+      await refresh()
+      return result
+    },
+    confirmBankNotificationAsTransaction: (notificationId, requestId, input) =>
+      runAndRefresh(() => confirmBankNotificationAsTransactionRequest(notificationId, requestId, input)),
+    confirmBankNotificationAsTransfer: (notificationId, requestId, input) =>
+      runAndRefresh(() => confirmBankNotificationAsTransferRequest(notificationId, requestId, input)),
+    linkBankNotificationToTransaction: (notificationId, transactionId) =>
+      runAndRefresh(() => linkBankNotificationToTransactionRequest(notificationId, transactionId)),
+    dismissBankNotification: (notificationId) =>
+      runAndRefresh(() => dismissBankNotificationRequest(notificationId)),
+    saveCardAccountLink: (identifierType, lastDigits, accountId) =>
+      runAndRefresh(() => saveCardAccountLinkRequest(identifierType, lastDigits, accountId)),
+  }), [accounts, bankInboxAvailable, bankNotifications, cardAccountLinks, categories, error, fixedExpensePeriods, fixedExpenseVersions, fixedExpenses, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId])
 
   return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>
 }

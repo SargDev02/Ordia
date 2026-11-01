@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
-import type { FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpensePeriod } from '../types/finance'
+import type { BankCardAccountLink, BankNotification, FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpensePeriod } from '../types/finance'
 import { HomePage } from './HomePage'
 
 vi.mock('../components/HomeTasks', () => ({ HomeTasks: () => <div>Checklist de tareas</div> }))
@@ -17,12 +17,21 @@ const mocks = vi.hoisted(() => ({
   signOut: vi.fn(),
   updateAccount: vi.fn(),
   updateTransaction: vi.fn(),
+  createBankNotification: vi.fn(),
+  confirmBankNotificationAsTransaction: vi.fn(),
+  confirmBankNotificationAsTransfer: vi.fn(),
+  linkBankNotificationToTransaction: vi.fn(),
+  dismissBankNotification: vi.fn(),
+  saveCardAccountLink: vi.fn(),
   finance: {
     accounts: [] as FinancialAccount[],
     categories: [] as FinancialCategory[],
     fixedExpensePeriods: [] as FixedExpensePeriod[],
     fixedExpenses: [] as FixedExpense[],
     fixedExpenseVersions: [],
+    bankInboxAvailable: true,
+    bankNotifications: [] as BankNotification[],
+    cardAccountLinks: [] as BankCardAccountLink[],
     error: '',
     isLoading: false,
     realtimeStatus: 'connected' as const,
@@ -57,6 +66,12 @@ vi.mock('../finance/useFinance', () => ({
     renameCategory: mocks.renameCategory,
     updateAccount: mocks.updateAccount,
     updateTransaction: mocks.updateTransaction,
+    createBankNotification: mocks.createBankNotification,
+    confirmBankNotificationAsTransaction: mocks.confirmBankNotificationAsTransaction,
+    confirmBankNotificationAsTransfer: mocks.confirmBankNotificationAsTransfer,
+    linkBankNotificationToTransaction: mocks.linkBankNotificationToTransaction,
+    dismissBankNotification: mocks.dismissBankNotification,
+    saveCardAccountLink: mocks.saveCardAccountLink,
   }),
 }))
 
@@ -92,6 +107,10 @@ describe('acciones financieras rápidas', () => {
     mocks.finance.isLoading = false
     mocks.finance.transactions = []
     mocks.finance.fixedExpensePeriods = []
+    mocks.finance.bankInboxAvailable = true
+    mocks.finance.bankNotifications = []
+    mocks.createAccount.mockResolvedValue(undefined)
+    mocks.updateAccount.mockResolvedValue(undefined)
     mocks.createTransaction.mockResolvedValue(undefined)
     mocks.createCategory.mockResolvedValue(undefined)
   })
@@ -204,18 +223,62 @@ describe('acciones financieras rápidas', () => {
     expect(screen.getAllByText('Todas las cuentas (2)')).toHaveLength(2)
   })
 
-  it('abre la administración y crea una subcategoría del tipo elegido', async () => {
+  it('abre la administración y crea una subcategoría buscando la categoría principal sin convertir el campo de nombre en selector', async () => {
     const user = userEvent.setup()
     renderHome()
     await user.click(screen.getByRole('button', { name: 'Administrar categorías' }))
     const dialog = screen.getByRole('dialog', { name: 'Administrar categorías' })
-    await user.selectOptions(within(dialog).getByLabelText('Nivel'), 'expense-category')
-    await user.type(within(dialog).getByLabelText('Nombre'), 'Restaurantes')
+    await user.click(within(dialog).getByLabelText('Nivel'))
+    const parentSearch = within(dialog).getByRole('combobox', { name: 'Buscar categoría principal' })
+    expect(parentSearch).toHaveFocus()
+    await user.type(parentSearch, 'alimentacion')
+    await user.click(within(dialog).getByRole('option', { name: 'Subcategoría de Alimentación' }))
+    const nameInput = within(dialog).getByLabelText('Nombre')
+    expect(nameInput.tagName).toBe('INPUT')
+    await user.type(nameInput, 'Restaurantes')
     await user.click(within(dialog).getByRole('button', { name: 'Crear categoría' }))
     await waitFor(() => expect(mocks.createCategory).toHaveBeenCalledWith({
       kind: 'expense',
       name: 'Restaurantes',
       parent_id: 'expense-category',
+    }))
+  })
+
+  it('solicita teclado numérico en Saldo inicial y permite saldos negativos en móvil con el botón ± Signo al crear y editar cuentas', async () => {
+    const user = userEvent.setup()
+    renderHome()
+
+    // Crear cuenta con saldo inicial negativo usando el botón ± Signo
+    await user.click(screen.getByRole('button', { name: 'Nueva cuenta' }))
+    const createDialog = screen.getByRole('dialog', { name: 'Nueva cuenta' })
+    await user.type(within(createDialog).getByLabelText('Nombre'), 'Tarjeta saldo pendiente')
+    const balanceInput = within(createDialog).getByLabelText('Saldo inicial')
+    expect(balanceInput).toHaveAttribute('inputmode', 'numeric')
+    await user.clear(balanceInput)
+    await user.click(within(createDialog).getByRole('button', { name: 'Cambiar signo del saldo inicial' }))
+    await user.type(balanceInput, '250000')
+    expect(balanceInput).toHaveValue('-250000')
+    await user.click(within(createDialog).getByRole('button', { name: 'Guardar cuenta' }))
+
+    await waitFor(() => expect(mocks.createAccount).toHaveBeenCalledWith({
+      account_type: 'bank',
+      initial_balance: -250000,
+      name: 'Tarjeta saldo pendiente',
+    }))
+
+    // Editar cuenta existente conserva inputMode="numeric" y entero exacto
+    await user.click(screen.getAllByRole('button', { name: 'Editar' })[0])
+    const editDialog = screen.getByRole('dialog', { name: 'Editar cuenta' })
+    const editBalanceInput = within(editDialog).getByLabelText('Saldo inicial')
+    expect(editBalanceInput).toHaveAttribute('inputmode', 'numeric')
+    await user.clear(editBalanceInput)
+    await user.type(editBalanceInput, '480000')
+    await user.click(within(editDialog).getByRole('button', { name: 'Guardar cuenta' }))
+
+    await waitFor(() => expect(mocks.updateAccount).toHaveBeenCalledWith('account-a', {
+      account_type: 'bank',
+      initial_balance: 480000,
+      name: 'Principal',
     }))
   })
 
@@ -269,5 +332,46 @@ describe('acciones financieras rápidas', () => {
     expect(suggestionsSection).toBeInTheDocument()
     expect(suggestionsSection).toHaveTextContent('Pagos próximos (2026-10-26 a 2026-11-01)')
     expect(suggestionsSection).toHaveTextContent('Internet Hogar')
+  })
+
+  it('renderiza la bandeja de movimientos por revisar accesible desde el resumen', () => {
+    mocks.finance.bankNotifications = [
+      {
+        id: 'notif-pending-1',
+        user_id: 'user-a',
+        client_request_id: 'req-np1',
+        bank_name: 'Bancolombia',
+        source_channel: 'manual',
+        notification_type: 'purchase',
+        amount: 39900,
+        currency: 'COP',
+        occurred_on: '2026-10-17',
+        occurred_time: '13:17',
+        merchant: 'HOMECENTER RIONEGRO',
+        account_last_digits: null,
+        card_last_digits: '0541',
+        card_type: 'debit',
+        counterparty_name: null,
+        counterparty_account_last_digits: null,
+        status: 'pending',
+        resolved_transaction_id: null,
+        resolution_request_id: null,
+        dismissed_at: null,
+        resolved_at: null,
+        created_at: '2026-10-17T13:17:00Z',
+        updated_at: '2026-10-17T13:17:00Z',
+      },
+    ]
+
+    renderHome()
+
+    const link = screen.getByRole('link', { name: /Movimientos por revisar/i })
+    expect(link).toHaveAttribute('href', '#movimientos-por-revisar')
+
+    const inboxSection = screen.getByLabelText('Bandeja de avisos bancarios por revisar')
+    expect(inboxSection).toBeInTheDocument()
+    expect(inboxSection).toHaveTextContent('1 por revisar')
+    expect(inboxSection).toHaveTextContent('HOMECENTER RIONEGRO')
+    expect(inboxSection).toHaveTextContent('39.900')
   })
 })

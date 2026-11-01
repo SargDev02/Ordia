@@ -49,7 +49,8 @@ export function TransactionForm({ initialKind = 'expense', transaction, onCancel
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
-    const parsedAmount = Number(amount)
+    const cleanAmount = amount.trim()
+    const parsedAmount = /^\d+$/.test(cleanAmount) ? Number(cleanAmount) : Number.NaN
     if (!accountId) return setError('Selecciona una cuenta.')
     if (!Number.isSafeInteger(parsedAmount) || parsedAmount <= 0 || parsedAmount > 9_000_000_000_000) return setError('El importe debe ser un número entero positivo en pesos.')
     if (!date) return setError('Selecciona una fecha.')
@@ -85,7 +86,7 @@ export function TransactionForm({ initialKind = 'expense', transaction, onCancel
         <div className="sm:col-span-2"><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-kind">Tipo</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" data-dialog-initial-focus id="transaction-kind" onChange={(event) => handleKindChange(event.target.value as TransactionKind)} value={kind}><option value="expense">Gasto</option><option value="income">Ingreso</option><option value="transfer">Transferencia</option></select></div>
         <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-account">{kind === 'transfer' ? 'Cuenta de origen' : 'Cuenta'}</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" id="transaction-account" onChange={(event) => setAccountId(event.target.value)} value={accountId}><option value="">Selecciona una cuenta</option>{availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.archived_at ? ' (archivada)' : ''}</option>)}</select></div>
         {kind === 'transfer' && <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-destination">Cuenta de destino</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" id="transaction-destination" onChange={(event) => setDestinationId(event.target.value)} value={destinationId}><option value="">Selecciona una cuenta</option>{availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.archived_at ? ' (archivada)' : ''}</option>)}</select></div>}
-        <FormField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="transaction-amount" label="Importe" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
+        <FormField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="transaction-amount" inputMode="numeric" label="Importe" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
         <FormField disabled={isSubmitting} id="transaction-date" label="Fecha" onChange={(event) => setDate(event.target.value)} type="date" value={date} />
         {kind !== 'transfer' && <div className="min-w-0 sm:col-span-2"><CategoryPicker categories={categories} disabled={isSubmitting} id="transaction-category" key={kind} onChange={(id) => { if (id !== categoryId) { setCategoryId(id); markDirty() } }} options={categoryOptions} value={categoryId} />{categoryOptions.length === 0 && <p className="mt-2 text-sm text-[#8b554d]">No hay categorías activas de este tipo. Crea una desde “Administrar categorías”.</p>}</div>}
         <div className={kind === 'transfer' ? 'sm:col-span-2' : ''}><FormField disabled={isSubmitting} id="transaction-description" label="Descripción (opcional)" maxLength={240} onChange={(event) => setDescription(event.target.value)} value={description} /></div>

@@ -1,5 +1,22 @@
 import { createContext } from 'react'
-import type { AccountInput, CategoryInput, FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpenseInput, FixedExpensePaymentInput, FixedExpensePeriod, FixedExpenseVersion, TransactionInput } from '../types/finance'
+import type {
+  AccountInput,
+  BankCardAccountLink,
+  BankNotification,
+  CategoryInput,
+  ConfirmNotificationTransactionInput,
+  ConfirmNotificationTransferInput,
+  CreateBankNotificationInput,
+  FinancialAccount,
+  FinancialCategory,
+  FinancialTransaction,
+  FixedExpense,
+  FixedExpenseInput,
+  FixedExpensePaymentInput,
+  FixedExpensePeriod,
+  FixedExpenseVersion,
+  TransactionInput,
+} from '../types/finance'
 
 export type RealtimeStatus = 'connecting' | 'connected' | 'offline'
 
@@ -9,6 +26,9 @@ export interface FinanceContextValue {
   fixedExpenses: FixedExpense[]
   fixedExpensePeriods: FixedExpensePeriod[]
   fixedExpenseVersions: FixedExpenseVersion[]
+  bankInboxAvailable?: boolean
+  bankNotifications: BankNotification[]
+  cardAccountLinks: BankCardAccountLink[]
   error: string
   isLoading: boolean
   realtimeStatus: RealtimeStatus
@@ -30,6 +50,12 @@ export interface FinanceContextValue {
   updateTransaction: (transactionId: string, input: TransactionInput) => Promise<void>
   updateFixedExpense: (fixedExpenseId: string, input: FixedExpenseInput) => Promise<void>
   undoFixedExpensePayment: (periodId: string) => Promise<void>
+  createBankNotification: (input: CreateBankNotificationInput) => Promise<BankNotification>
+  confirmBankNotificationAsTransaction: (notificationId: string, requestId: string, input: ConfirmNotificationTransactionInput) => Promise<void>
+  confirmBankNotificationAsTransfer: (notificationId: string, requestId: string, input: ConfirmNotificationTransferInput) => Promise<void>
+  linkBankNotificationToTransaction: (notificationId: string, transactionId: string) => Promise<void>
+  dismissBankNotification: (notificationId: string) => Promise<void>
+  saveCardAccountLink: (identifierType: 'card' | 'account', lastDigits: string, accountId: string) => Promise<void>
 }
 
 export const FinanceContext = createContext<FinanceContextValue | null>(null)

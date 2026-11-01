@@ -73,6 +73,7 @@ El modelo se construye con estas migraciones versionadas:
 - `supabase/migrations/20261026234754_fix_fixed_expense_function_lint.sql`
 - `supabase/migrations/20261027001830_add_push_notifications.sql`
 - `supabase/migrations/20261027002318_harden_push_subscription_rpcs.sql`
+- `supabase/migrations/20261101133000_add_bank_notifications_inbox.sql`
 
 - `financial_accounts` conserva nombre, tipo, COP, saldo inicial y fecha de archivo.
 - `financial_transactions` representa un ingreso, gasto o transferencia completa. Una transferencia usa una sola fila con origen y destino; por ello se crea, edita o elimina atómicamente y no entra en los totales de ingresos o gastos.
@@ -163,6 +164,55 @@ Ordia incorpora un motor determinista de reglas para ayudar a comprender gastos 
    - Cada tarjeta indica su alcance explícito (cuentas analizadas y fechas utilizadas).
    - Cuando no hay cuentas seleccionadas, muestra un estado vacío claro y comprensible solicitando seleccionar al menos una cuenta para generar el análisis.
    - El acceso es directo desde el resumen mediante el enlace de navegación «Ver sugerencias financieras ↓».
+
+### Bandeja «Movimientos por revisar» (avisos bancarios Bancolombia)
+
+Ordia incorpora una bandeja privada de entrada para procesar notificaciones bancarias de Bancolombia pegadas manualmente por el usuario, sin servicios de IA externos y sin alterar saldos hasta su confirmación explícita:
+
+1. **Reconocimiento determinista y extracción de datos**:
+   - Reconoce compras con tarjeta de débito/crédito, transferencias recibidas y transferencias enviadas.
+   - Extrae el importe exacto en pesos COP enteros, reconociendo formatos con comas o puntos de miles y centavos en cero (`$22,000` → 22.000, `$39.900,00` → 39.900, `$200,000.00` → 200.000). Si el aviso contiene centavos distintos de cero, separadores inválidos o importes ambiguos, explica el problema y no crea el pendiente; nunca redondea ni trunca silenciosamente.
+   - Extrae fecha y hora en `America/Bogota` (admitiendo años de 4 o 2 dígitos, ej. `20/10/26` → `2026-10-20`). Valida fechas reales en el calendario.
+   - Identifica comercio en compras (ej. `HOMECENTER RIONEGRO`), número de cuenta (ej. `**8422`) y tarjeta (ej. `T.Deb *0541`).
+   - Distingue estrictamente tarjeta de cuenta: no asume que una tarjeta pertenezca a una cuenta sin asociación previa.
+   - Trata remitentes o destinos vacíos (`""` o `*""`) como desconocidos sin inventar datos.
+   - Neutralidad en métodos de pago: una compra con tarjeta de débito no asume ni inventa el uso de Apple Pay.
+   - Ante textos incompletos o ambiguos, emite mensajes explicativos indicando con exactitud qué dato falta.
+
+2. **Creación de pendientes e integridad de saldos**:
+   - Pegar un aviso crea **únicamente un pendiente** en `bank_notifications`.
+   - **No cambia saldos ni crea movimientos financieros** hasta que el usuario decida registrarlo.
+   - Ofrece opciones adaptadas según la naturaleza de la transacción:
+     - Entrada por transferencia: «Registrar ingreso» o «Transferencia entre mis cuentas».
+     - Salida por transferencia: «Registrar gasto» o «Transferencia entre mis cuentas».
+     - Compra: «Registrar gasto».
+     - En todos los casos: «Ya lo registré» y «Descartar».
+   - «Ya lo registré»: valida tanto en interfaz como en el servidor propietario, movimiento vigente (`deleted_at IS NULL`), importe exacto, tipo, sentido y cuenta cuando se conozca (en transferencias propias, origen para salidas y destino para entradas). Si existen varias coincidencias válidas, presenta todas para que el usuario elija.
+   - Transferencia entre cuentas propias: solicita la cuenta faltante y crea una sola fila en `financial_transactions`.
+   - Ingresos y gastos: reutiliza el buscador en memoria `CategoryPicker`.
+
+3. **Asociaciones personales de cuentas y tarjetas**:
+   - Permite recordar la asociación entre una tarjeta o terminación de cuenta y una cuenta de Ordia mediante `bank_card_account_links`.
+   - Las asociaciones son estrictamente personales por usuario (`user_id` con RLS): dos usuarios independientes pueden tener tarjetas terminadas en 0541 asociadas a sus respectivas cuentas sin que sus datos se mezclen.
+
+4. **Prevención de duplicados, inmutabilidad y concurrencia**:
+   - Cada acción genera un `client_request_id` único y las RPCs bloquean la fila del aviso con `FOR UPDATE`, garantizando que la creación del movimiento y la resolución del aviso ocurran en una sola operación atómica.
+   - `authenticated` solo posee privilegio `SELECT` sobre `bank_notifications` y `bank_card_account_links` (con políticas RLS exclusivamente `FOR SELECT`); todas las escrituras se ejecutan mediante funciones en `private.*` expuestas por envoltorios `SECURITY INVOKER` en `public.*`, de modo que ni siquiera activando manualmente `ordia.bank_notification_flow` un cliente puede escribir directamente en las tablas. Además, el trigger `validate_bank_notification` prohíbe sobrescribir avisos ya resueltos o descartados, y si falla la creación del movimiento el aviso permanece en `pending`.
+   - Si la migración aún no está instalada, la interfaz distingue explícitamente «Bandeja no disponible» de «Sin pendientes» y nunca muestra éxito cuando nada fue guardado.
+   - Avisos coincidentes: si dos avisos presentan los mismos datos pero carecen de identificador bancario único, Ordia señala la posible coincidencia en la interfaz mediante un distintivo de advertencia sin descartar automáticamente operaciones legítimas.
+
+5. **Privacidad, teclado numérico móvil y buscador unificado de categorías**:
+   - La lista móvil prioriza importe, tipo y fecha/hora, reservando los detalles para el diálogo de revisión.
+   - Por privacidad, **nunca se almacena ni se registra en logs el correo o mensaje completo**, conservando únicamente los campos estructurados necesarios.
+   - Todos los campos numéricos editables en creación y edición solicitan teclado numérico móvil (`inputMode="numeric"`): saldo inicial de cuenta (con botón «± Signo» para ingresar saldos negativos en móvil), importes de ingresos/gastos/transferencias, importe previsto y pago real de gastos fijos, duraciones de tareas y margen de disponibilidad en minutos.
+   - Todos los selectores de categorías y subcategorías existentes (`TransactionForm`, `BankNotificationsInbox`, `FixedExpenseForm`, `FixedExpensePaymentForm` y el selector «Nivel» de `CategoryManager`) reutilizan `CategoryPicker` con búsqueda instantánea en memoria sin tildes ni distinción de mayúsculas, conservando `Padre → Subcategoría` y guardando por ID sin migraciones adicionales para mejoras de interfaz.
+
+6. **Requisitos de aislamiento, pruebas SQL locales y futuras etapas (Gmail y Web Push)**:
+   - Los avisos y asociaciones se asignan exclusivamente al usuario autenticado en el servidor (`auth.uid()`); el cliente no puede declarar propietarios ajenos.
+   - La migración `20261101133000_add_bank_notifications_inbox.sql` fue validada primero en PostgreSQL 17.11 local (`supabase_db_Ordia`, `127.0.0.1:54322`) y aplicada una sola vez en **Ordia** (`dedtyhomynsmvatfnshs`) tras revisar `migration list` y `db push --dry-run`, conservando intactos todos los datos existentes.
+   - Pasaron en PostgreSQL local real tanto `supabase/checks/bank_notifications_isolation.sql` (con `ON_ERROR_STOP=1`: dos usuarios `authenticated`, tarjetas con la misma terminación `0541` sin cruce de datos, rechazo de vinculación a movimientos ajenos o incompatibles sin alterar saldos, rechazo por privilegios de escrituras directas aun activando `ordia.bank_notification_flow` y reversión ante fallo del movimiento) como `scripts/check-bank-notifications-concurrency.mjs` (dos conexiones PostgreSQL locales independientes con `request_id` distintos y barrera observada en `pg_blocking_pids`, confirmando un único movimiento, un solo efecto en saldo, conservación en `pending` sin alterar saldo si falla el movimiento y cero datos residuales).
+   - **Futura etapa de Gmail**: cada usuario activará voluntariamente el reenvío desde su propia cuenta de Ordia hacia una dirección de destino privada y exclusiva por usuario; nunca se deducirá el propietario por el remitente bancario ni por el correo de inicio de sesión.
+   - **Futura etapa de Web Push**: las alertas de movimientos bancarios llegarán exclusivamente a los dispositivos que su propietario haya habilitado. En esta etapa no se crearon alias de correo, no se conectó Gmail ni se enviaron notificaciones.
 
 ## Tareas y checklist personal
 
@@ -667,7 +717,7 @@ Al cerrar la etapa 4B pasaron `typecheck`, `lint`, **49 pruebas de Vitest en 7 a
 - Se contrastaron todos los módulos locales con las funciones remotas: `icloud-calendar` y `google-calendar`, ambas **versión 5 ACTIVE**, coinciden. El cierre no vuelve a desplegarlas ni cambia secretos.
 - Las trece migraciones coinciden en el proyecto **Ordia — `dedtyhomynsmvatfnshs`**. Se incluyen las migraciones de tareas, iCloud, Google, sugerencias de horarios (`20261028020000_add_task_scheduling_suggestions.sql`) y la serialización y protección contra conflictos de concurrencia (`20261028130644_serialize_task_scheduling_conflicts.sql`); no se vuelven a ejecutar ni se editan.
 - La migración `20261028130644_serialize_task_scheduling_conflicts.sql` añade serialización a nivel de usuario con `pg_advisory_xact_lock`, trigger `validate_personal_task_schedule` contra solapamientos también en modificaciones manuales, y amplía la RPC `schedule_personal_task` para revalidar versión, duración, futuro, disponibilidad, márgenes, vencimiento vigente, otras tareas, eventos externos y cobertura/frescura. `p_accept_unverified_calendars` omite únicamente cobertura/frescura; los demás controles permanecen. La revisión puntual posterior confirmó estas reglas sin modificar la migración aplicada.
-- La suite local actual contiene **218 pruebas en 28 archivos**, incluidos el selector buscable de categorías y su integración con el formulario, además del cálculo de huecos, márgenes, límites de vencimiento, tareas vencidas como reprogramación tardía, cobertura, reloj de resumen en tiempo real, eventos en curso simultáneos no truncados (>5), diálogos de disponibilidad, concurrencia y las sugerencias financieras deterministas (comparaciones históricas con ajuste de meses, obligaciones vencidas y próximas en 7 días, alertas de saldo insuficiente y desgloses de categorías). La configuración de chunks de Vite separa Supabase y las bibliotecas base, reduciendo el archivo principal a 29 kB sin advertencias de tamaño. Las cuatro carreras reales entre conexiones SQL están descritas por separado y no se cuentan como pruebas Vitest.
+- La suite local actual contiene **260 pruebas en 30 archivos**, incluidos la bandeja «Movimientos por revisar» (rechazo de centavos no nulos, reglas de «Ya lo registré» y estado «Bandeja no disponible»), el parser de avisos bancarios de Bancolombia, el teclado numérico móvil (`inputMode="numeric"`) con soporte de saldo negativo, el selector buscable `CategoryPicker` unificado en los cinco selectores de categorías de la app, además del cálculo de huecos, márgenes, límites de vencimiento, tareas vencidas como reprogramación tardía, cobertura, reloj de resumen en tiempo real, eventos en curso simultáneos no truncados (>5), diálogos de disponibilidad, concurrencia y las sugerencias financieras deterministas (comparaciones históricas con ajuste de meses, obligaciones vencidas y próximas en 7 días, alertas de saldo insuficiente y desgloses de categorías). La configuración de chunks de Vite separa Supabase y las bibliotecas base, reduciendo el archivo principal a 29 kB sin advertencias de tamaño. Las carreras reales entre conexiones SQL están descritas por separado y no se cuentan como pruebas Vitest.
 - Esta entrega reúne sugerencias de horarios, protección contra conflictos, actualización temporal de «Eventos de hoy», pruebas y las dos migraciones del planificador ya aplicadas. La publicación se realiza mediante commit y push normal a `master`, seguido del despliegue automático existente de Vercel, sin despliegue manual paralelo. Antes del push se volvió a contrastar el SQL local con las 13 migraciones de Ordia (ignorando formato/comentarios), sin diferencias ni ejecución de migraciones.
 - La publicación usa `origin=https://github.com/SargDev02/Ordia.git`, rama **master**, y la integración Git de Vercel ya enlazada. El frontend solo necesita las tres variables públicas existentes. Los valores de `.env*`, `.vercel`, `.temp`, credenciales de herramientas, dependencias, compilaciones y capturas temporales quedan fuera del commit.
 - Las verificaciones HTTP y de navegador de la URL publicada se informan al terminar el despliegue. Una ruta que sirve `index.html` con `200` no demuestra por sí sola que React haya redirigido correctamente ni que OAuth haya concluido; esas comprobaciones se distinguen en la entrega.
@@ -682,6 +732,7 @@ Para probar esta publicación en iPhone:
 6. En **Tareas → Disponibilidad**, revisa franjas y margen; crea una tarea de prueba con duración, solicita sugerencias y acepta una. Comprueba su horario en Calendario y que un conflicto conserve un mensaje claro. Una tarea vencida debe indicar reprogramación tardía y mantener su vencimiento original.
 7. En **Resumen → Eventos de hoy**, comprueba «En curso», el grupo de todo el día y los próximos. Al terminar un evento debe desaparecer del resumen en hasta 30 segundos; al volver del segundo plano debe actualizarse. El evento debe seguir disponible en Calendario. Esta comprobación autenticada en iPhone queda pendiente del dispositivo del usuario.
 8. En **Resumen → Ver sugerencias financieras**, prueba todas, una y ninguna cuenta. Revisa fechas, comparación mensual y categorías. Los compromisos por cuenta incluyen vencidos y próximos 7 días; el total de pagos próximos conserva su propia ventana. Las obligaciones sin cuenta se identifican aparte y ninguna sugerencia mueve dinero.
+9. En un iPhone real (pendiente de comprobar en dispositivo físico), verifica la apertura del teclado numérico en importes de cuentas (`± Signo` para saldos negativos), movimientos, gastos fijos, pagos, duraciones de tareas y margen de disponibilidad, así como la escritura inmediata y selección táctil sin pérdida de opción al cerrarse el teclado en todos los selectores `CategoryPicker`.
 
 ## Comprobación manual remota
 

@@ -15,6 +15,7 @@ import { TransactionForm } from '../components/TransactionForm'
 import { HomeTasks } from '../components/HomeTasks'
 import { HomeCalendar } from '../components/HomeCalendar'
 import { FinancialSuggestions } from '../components/FinancialSuggestions'
+import { BankNotificationsInbox } from '../components/BankNotificationsInbox'
 import { generateFinancialSuggestions } from '../finance/suggestions'
 import { useBogotaToday } from '../tasks/useBogotaToday'
 
@@ -83,6 +84,13 @@ export function HomePage() {
       ? 'Ninguna cuenta seleccionada'
       : `${selectedAccountIds.size} cuenta${selectedAccountIds.size === 1 ? '' : 's'} seleccionada${selectedAccountIds.size === 1 ? '' : 's'}`
 
+  const bankInboxAvailable = finance.bankInboxAvailable ?? true
+  const bankNotifications = finance.bankNotifications ?? []
+  const cardAccountLinks = finance.cardAccountLinks ?? []
+  const pendingNotificationsCount = bankInboxAvailable
+    ? bankNotifications.filter((n) => n.status === 'pending').length
+    : 0
+
   function openAccount(account?: FinancialAccount) {
     setUnavailableKind(null)
     setEditorDirty(false)
@@ -138,7 +146,19 @@ export function HomePage() {
         {(finance.error || actionError) && <div className="mt-6"><AuthNotice tone="error">{finance.error || actionError}</AuthNotice><button className="mt-3 text-sm font-semibold text-[#346a52] underline" onClick={() => void finance.refresh()} type="button">Volver a intentar</button></div>}
 
         <section className="mt-10 grid gap-4 sm:grid-cols-3" aria-label="Resumen financiero filtrado"><SummaryCard label="Saldo total" value={formatCop(totalBalance)} detail={selectionDetail} /><SummaryCard label="Ingresos del período" value={formatCop(summary.income)} detail={`${summary.start} a ${summary.end} · sin saldos iniciales ni transferencias`} tone="positive" /><SummaryCard label="Gastos del período" value={formatCop(summary.expense)} detail={`${summary.start} a ${summary.end} · sin transferencias`} tone="negative" /></section>
-        <div className="mt-2 flex justify-end">
+        <div className="mt-2 flex justify-end gap-4">
+          <a
+            className="inline-flex items-center gap-1 text-xs font-semibold text-[#2f664d] hover:underline"
+            href="#movimientos-por-revisar"
+          >
+            <span>Movimientos por revisar</span>
+            {pendingNotificationsCount > 0 && (
+              <span className="rounded-full bg-[#fef3cd] px-1.5 py-0.5 text-[10px] text-[#856404]">
+                {pendingNotificationsCount}
+              </span>
+            )}
+            <span aria-hidden="true">↓</span>
+          </a>
           <a
             className="inline-flex items-center gap-1 text-xs font-semibold text-[#2f664d] hover:underline"
             href="#sugerencias-financieras"
@@ -154,6 +174,22 @@ export function HomePage() {
         <section className="mt-8 rounded-[24px] border border-[#dce6d9] bg-white p-5 sm:p-6" aria-label="Obligaciones del mes"><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-sm font-semibold text-[#4f8068]">Obligaciones del mes</p><p className="mt-2 text-sm text-[#718279]">{fixedExpenseSummary.currentMonth.start} a {fixedExpenseSummary.currentMonth.end} · America/Bogota. No afectan saldos hasta pagarse.</p></div><Link className="inline-flex rounded-xl bg-[#edf3ea] px-4 py-2.5 text-sm font-semibold text-[#315c49]" to="/gastos-fijos">Ver gastos fijos</Link></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><div className="rounded-2xl bg-[#f4f7f1] p-4"><p className="text-sm text-[#66796f]">Pendientes del mes · {fixedExpenseSummary.pendingThisMonth.length}</p><p className="mt-2 text-2xl font-semibold text-[#173f31]">{formatCop(fixedExpenseSummary.pendingThisMonthAmount)}</p></div><div className="rounded-2xl bg-[#f8ece8] p-4"><p className="text-sm text-[#8b554d]">Vencidos · {fixedExpenseSummary.overdue.length}</p><p className="mt-2 text-2xl font-semibold text-[#9a493e]">{formatCop(fixedExpenseSummary.overdueAmount)}</p></div></div><p className="mt-3 text-xs leading-5 text-[#829188]">Un vencimiento anterior a hoy dentro del mes aparece en ambos totales. Los meses futuros se consultan en el detalle.</p></section>
 
         <FinancialSuggestions suggestions={financialSuggestions} />
+
+        <div id="movimientos-por-revisar">
+          <BankNotificationsInbox
+            accounts={finance.accounts}
+            cardAccountLinks={cardAccountLinks}
+            categories={finance.categories}
+            isAvailable={bankInboxAvailable}
+            notifications={bankNotifications}
+            onConfirmTransaction={finance.confirmBankNotificationAsTransaction}
+            onConfirmTransfer={finance.confirmBankNotificationAsTransfer}
+            onCreateNotification={finance.createBankNotification}
+            onDismissNotification={finance.dismissBankNotification}
+            onLinkTransaction={finance.linkBankNotificationToTransaction}
+            transactions={finance.transactions}
+          />
+        </div>
 
         <section className="mt-12"><SectionHeader title="Cuentas" description="Saldos actuales calculados desde el saldo inicial y todos los movimientos." />{finance.isLoading ? <LoadingBlock /> : activeAccounts.length === 0 ? <EmptyState title="Aún no tienes cuentas" description="Crea tu primera cuenta para empezar a registrar movimientos reales." /> : <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-3">{activeAccounts.map((account) => <AccountCard key={account.id} account={account} balance={calculateAccountBalance(account, finance.transactions)} onEdit={() => openAccount(account)} onArchive={() => setConfirmation({ type: 'archive', account })} />)}</div>}{archivedAccounts.length > 0 && <details className="mt-5 rounded-2xl border border-[#dce6d9] bg-white p-5"><summary className="cursor-pointer font-semibold text-[#456356]">Cuentas archivadas ({archivedAccounts.length})</summary><div className="mt-4 grid gap-3 sm:grid-cols-2">{archivedAccounts.map((account) => <div className="rounded-xl bg-[#f4f7f1] p-4" key={account.id}><p className="font-semibold text-[#52675d]">{account.name}</p><p className="mt-1 text-sm text-[#718279]">Saldo conservado: {formatCop(calculateAccountBalance(account, finance.transactions))}</p><button className="mt-3 text-sm font-semibold text-[#346a52]" onClick={() => openAccount(account)} type="button">Editar datos</button></div>)}</div></details>}</section>
 

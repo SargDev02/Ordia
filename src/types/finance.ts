@@ -133,3 +133,96 @@ export interface FixedExpensePaymentInput {
   paid_on: string
   amount: number
 }
+
+export type BankNotificationType = 'transfer_received' | 'purchase' | 'transfer_sent'
+export type BankNotificationStatus = 'pending' | 'resolved' | 'dismissed'
+
+export interface BankCardAccountLink {
+  id: string
+  user_id: string
+  identifier_type: 'card' | 'account'
+  last_digits: string
+  account_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface BankNotification {
+  id: string
+  user_id: string
+  client_request_id: string
+  bank_name: string
+  source_channel: 'manual' | 'gmail'
+  notification_type: BankNotificationType
+  amount: number
+  currency: 'COP'
+  occurred_on: string
+  occurred_time: string
+  merchant: string | null
+  account_last_digits: string | null
+  card_last_digits: string | null
+  card_type: 'debit' | 'credit' | null
+  counterparty_name: string | null
+  counterparty_account_last_digits: string | null
+  status: BankNotificationStatus
+  resolved_transaction_id: string | null
+  resolution_request_id: string | null
+  dismissed_at: string | null
+  resolved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateBankNotificationInput {
+  bank_name?: string
+  source_channel?: 'manual' | 'gmail'
+  notification_type: BankNotificationType
+  amount: number
+  occurred_on: string
+  occurred_time: string
+  merchant?: string | null
+  account_last_digits?: string | null
+  card_last_digits?: string | null
+  card_type?: 'debit' | 'credit' | null
+  counterparty_name?: string | null
+  counterparty_account_last_digits?: string | null
+}
+
+export interface ConfirmNotificationTransactionInput {
+  kind: 'income' | 'expense'
+  account_id: string
+  category_id: string
+  description: string | null
+  occurred_on: string
+  remember_link?: boolean
+  identifier_type?: 'card' | 'account'
+  last_digits?: string
+}
+
+export interface ConfirmNotificationTransferInput {
+  account_id: string
+  destination_account_id: string
+  description: string | null
+  occurred_on: string
+  remember_link?: boolean
+  identifier_type?: 'card' | 'account'
+  last_digits?: string
+}
+
+export interface ParsedBankNotification {
+  bank_name: string
+  notification_type: BankNotificationType
+  amount: number
+  occurred_on: string
+  occurred_time: string
+  merchant: string | null
+  account_last_digits: string | null
+  card_last_digits: string | null
+  card_type: 'debit' | 'credit' | null
+  counterparty_name: string | null
+  counterparty_account_last_digits: string | null
+}
+
+export type ParseNotificationResult =
+  | { success: true; data: ParsedBankNotification }
+  | { success: false; error: string }

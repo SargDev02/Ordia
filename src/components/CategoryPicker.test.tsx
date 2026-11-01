@@ -86,4 +86,54 @@ describe('foco, viewport y ciclo de vida del selector', () => {
     expect(screen.getByRole('option', { name: 'Viajes' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /Telefonía|Servicios/ })).not.toBeInTheDocument()
   })
+
+  it('admite opciones iniciales y formato personalizado (selector Nivel de subcategorías) buscando sin tildes', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const roots = categories.filter((c) => !c.parent_id)
+    render(
+      <CategoryPicker
+        id="category-parent"
+        label="Nivel"
+        searchLabel="Buscar categoría principal"
+        clearLabel="Usar categoría principal"
+        leadingOptions={[{ id: '', label: 'Categoría principal', search: 'categoria principal' }]}
+        formatOptionLabel={(_cat, path) => `Subcategoría de ${path}`}
+        categories={categories}
+        options={roots}
+        value=""
+        onChange={onChange}
+      />,
+    )
+    expect(screen.getByLabelText('Nivel')).toHaveTextContent('Categoría principal')
+    await user.click(screen.getByLabelText('Nivel'))
+    const search = screen.getByRole('combobox', { name: 'Buscar categoría principal' })
+    expect(search).toHaveFocus()
+    await user.type(search, 'servicios')
+    await user.click(screen.getByRole('option', { name: 'Subcategoría de Servicios' }))
+    expect(onChange).toHaveBeenCalledWith('parent')
+  })
+
+  it('conserva la selección al tocar una opción en móvil cuando se cierra el teclado virtual', async () => {
+    const viewport = Object.assign(new EventTarget(), { height: 340 })
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(<CategoryPicker id="category" categories={categories} options={categories} value="parent" onChange={onChange} />)
+    await user.click(screen.getByLabelText('Categoría'))
+    const search = screen.getByRole('combobox')
+    const scrollSpy = vi.fn()
+    search.scrollIntoView = scrollSpy
+    scrollSpy.mockClear()
+
+    // Simular que el usuario toca una opción: el buscador pierde foco y el teclado móvil redimensiona el viewport
+    const option = screen.getByRole('option', { name: 'Servicios → Telefonía' })
+    search.blur()
+    viewport.height = 760
+    viewport.dispatchEvent(new Event('resize'))
+    expect(scrollSpy).not.toHaveBeenCalled()
+
+    fireEvent.click(option)
+    expect(onChange).toHaveBeenCalledWith('phone')
+  })
 })

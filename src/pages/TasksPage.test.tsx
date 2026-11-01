@@ -335,4 +335,57 @@ describe('formularios y checklist de tareas', () => {
       )
     })
   })
+
+  it('solicita teclado numérico en duraciones de tareas y margen de disponibilidad conservando enteros exactos', async () => {
+    mocks.preferences = {
+      user_id: 'u1',
+      slots: [{ day_of_week: 3, start_time: '09:00', end_time: '12:00' }],
+      buffer_minutes: 15,
+      all_day_blocks: true,
+      created_at: '',
+      updated_at: '',
+    }
+    const unscheduled = task({ id: 'task-num', title: 'Revisar presupuesto', estimated_minutes: null, due_on: '2026-10-28' })
+    const user = userEvent.setup()
+    renderTasks([unscheduled])
+
+    // 1. Duración rápida en «Tareas por organizar»
+    const quickDuration = screen.getByLabelText('Duración en minutos para Revisar presupuesto')
+    expect(quickDuration).toHaveAttribute('inputmode', 'numeric')
+    await user.type(quickDuration, '45')
+    await user.click(screen.getByRole('button', { name: 'Sugerir horario' }))
+    const scheduleButtons = await screen.findAllByRole('button', { name: /Programar en este horario/i })
+    await user.click(scheduleButtons[0])
+    await waitFor(() => {
+      expect(mocks.schedule).toHaveBeenCalledWith('task-num', expect.any(String), unscheduled.updated_at, 45, false)
+    })
+
+    // 2. Duración estimada en formulario de tarea (crear/editar)
+    await user.click(screen.getByRole('button', { name: 'Nueva tarea' }))
+    const taskDialog = screen.getByRole('dialog', { name: 'Nueva tarea' })
+    const taskMinutes = within(taskDialog).getByLabelText('Duración estimada (minutos, opcional)')
+    expect(taskMinutes).toHaveAttribute('inputmode', 'numeric')
+    await user.type(within(taskDialog).getByLabelText('Título'), 'Llamar al contador')
+    await user.type(taskMinutes, '35')
+    await user.click(within(taskDialog).getByRole('button', { name: 'Guardar tarea' }))
+    await waitFor(() => {
+      expect(mocks.save).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Llamar al contador', estimated_minutes: 35 }),
+        expect.any(String),
+        undefined,
+      )
+    })
+
+    // 3. Margen en minutos en Disponibilidad personal
+    await user.click(screen.getByRole('button', { name: 'Disponibilidad' }))
+    const availDialog = screen.getByRole('dialog', { name: 'Disponibilidad personal' })
+    const bufferInput = within(availDialog).getByLabelText('Margen de descanso entre compromisos')
+    expect(bufferInput).toHaveAttribute('inputmode', 'numeric')
+    await user.clear(bufferInput)
+    await user.type(bufferInput, '20')
+    await user.click(within(availDialog).getByRole('button', { name: 'Guardar disponibilidad' }))
+    await waitFor(() => {
+      expect(mocks.savePrefs).toHaveBeenCalledWith(expect.objectContaining({ buffer_minutes: 20 }))
+    })
+  })
 })

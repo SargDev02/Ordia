@@ -1,5 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FinancialCategory } from '../types/finance'
+
+export interface CategoryPickerLeadingOption {
+  id: string
+  label: string
+  search?: string
+}
 
 interface CategoryPickerProps {
   id: string
@@ -7,6 +13,12 @@ interface CategoryPickerProps {
   options: FinancialCategory[]
   value: string
   disabled?: boolean
+  label?: string
+  placeholder?: string
+  searchLabel?: string
+  clearLabel?: string | null
+  leadingOptions?: CategoryPickerLeadingOption[]
+  formatOptionLabel?: (category: FinancialCategory, path: string) => string
   onChange: (id: string) => void
 }
 
@@ -14,7 +26,20 @@ function normalizeSearch(value: string) {
   return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim().replace(/[→>]/g, ' ').replace(/\s+/g, ' ')
 }
 
-export function CategoryPicker({ id, categories, options, value, disabled = false, onChange }: CategoryPickerProps) {
+export function CategoryPicker({
+  id,
+  categories,
+  options,
+  value,
+  disabled = false,
+  label = 'Categoría',
+  placeholder = 'Selecciona una categoría',
+  searchLabel = 'Buscar categoría o subcategoría',
+  clearLabel = 'Limpiar selección',
+  leadingOptions = [],
+  formatOptionLabel,
+  onChange,
+}: CategoryPickerProps) {
   const uid = useId()
   const listId = `${uid}-options`
   const hintId = `${uid}-hint`
@@ -24,30 +49,40 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
   const listRef = useRef<HTMLUListElement>(null)
   const [isOpen, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [activeId, setActiveId] = useState('')
+  const [activeId, setActiveId] = useState<string | null>(null)
   const expanded = isOpen && !disabled
 
   const choices = useMemo(() => {
     const byId = new Map(categories.map((category) => [category.id, category]))
-    return options.map((category) => {
+    const leadingChoices = leadingOptions.map((option) => ({
+      id: option.id,
+      label: option.label,
+      search: normalizeSearch(`${option.label} ${option.search ?? ''}`),
+    }))
+    const categoryChoices = options.map((category) => {
       const parent = category.parent_id ? byId.get(category.parent_id) : null
       const path = parent ? `${parent.name} → ${category.name}` : category.name
+      const baseLabel = formatOptionLabel
+        ? formatOptionLabel(category, path)
+        : `${path}${category.archived_at ? ' (archivada)' : ''}`
       return {
         id: category.id,
-        label: `${path}${category.archived_at ? ' (archivada)' : ''}`,
-        search: normalizeSearch(path),
+        label: baseLabel,
+        search: normalizeSearch(`${path} ${baseLabel}`),
       }
     })
-  }, [categories, options])
+    return [...leadingChoices, ...categoryChoices]
+  }, [categories, formatOptionLabel, leadingOptions, options])
+
   const terms = normalizeSearch(query).split(' ').filter(Boolean)
   const filtered = choices.filter((choice) => terms.every((term) => choice.search.includes(term)))
-  const active = filtered.find((choice) => choice.id === activeId) ?? filtered[0]
+  const active = (activeId !== null ? filtered.find((choice) => choice.id === activeId) : undefined) ?? filtered[0]
   const activeIndex = active ? filtered.indexOf(active) : -1
   const selected = choices.find((choice) => choice.id === value)
 
   function open(last = false) {
     setQuery('')
-    setActiveId(last ? choices.at(-1)?.id ?? '' : value)
+    setActiveId(last ? (choices.at(-1)?.id ?? null) : value)
     setOpen(true)
   }
 
@@ -56,19 +91,26 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
     triggerRef.current?.focus()
   }
 
-  function select(id: string) {
-    onChange(id)
+  function select(nextId: string) {
+    onChange(nextId)
     close()
   }
 
+  useLayoutEffect(() => {
+    if (!expanded) return
+    // Enfoque sincrónico en la fase de commit para solicitar el teclado inmediatamente en iOS/Android.
+    inputRef.current?.focus()
+  }, [expanded])
+
   useEffect(() => {
     if (!expanded) return
-    inputRef.current?.focus()
     const viewport = window.visualViewport
     function fitResults() {
       const height = viewport?.height ?? window.innerHeight
       rootRef.current?.style.setProperty('--category-results-height', `${Math.max(80, Math.min(256, height * 0.35))}px`)
-      inputRef.current?.scrollIntoView?.({ block: window.innerWidth < 640 ? 'start' : 'nearest' })
+      if (document.activeElement === inputRef.current) {
+        inputRef.current?.scrollIntoView?.({ block: window.innerWidth < 640 ? 'start' : 'nearest' })
+      }
     }
     function outside(event: PointerEvent) {
       if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
@@ -108,7 +150,7 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
       }}
       ref={rootRef}
     >
-      <label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor={id}>Categoría</label>
+      <label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor={id}>{label}</label>
       <button
         aria-controls={expanded ? listId : undefined}
         aria-describedby={`${uid}-selection`}
@@ -117,7 +159,7 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
         className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#315c49] disabled:opacity-60"
         disabled={disabled}
         id={id}
-        onClick={() => expanded ? close() : open()}
+        onClick={() => (expanded ? close() : open())}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault()
@@ -127,12 +169,14 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
         ref={triggerRef}
         type="button"
       >
-        <span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]" id={`${uid}-selection`}>{selected?.label ?? (value ? 'Categoría no disponible. Selecciona otra.' : 'Selecciona una categoría')}</span>
+        <span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]" id={`${uid}-selection`}>
+          {selected?.label ?? (value ? 'Categoría no disponible. Selecciona otra.' : placeholder)}
+        </span>
         <span aria-hidden="true" className="shrink-0 text-[#66796f]">{expanded ? '▴' : '▾'}</span>
       </button>
       {expanded && (
         <div className="mt-2 min-w-0 rounded-2xl border border-[#c6d7c3] bg-[#f8faf6] p-3">
-          <label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor={`${uid}-search`}>Buscar categoría o subcategoría</label>
+          <label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor={`${uid}-search`}>{searchLabel}</label>
           <input
             aria-activedescendant={active ? `${listId}-${activeIndex}` : undefined}
             aria-autocomplete="list"
@@ -144,9 +188,9 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
             enterKeyHint="done"
             id={`${uid}-search`}
             onChange={(event) => {
-              event.stopPropagation() // Buscar no altera el movimiento ni su confirmación de descarte.
+              event.stopPropagation() // Buscar no altera el formulario ni su confirmación de descarte.
               setQuery(event.target.value)
-              setActiveId('')
+              setActiveId(null)
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
@@ -155,8 +199,10 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
                 if (!event.nativeEvent.isComposing && active) select(active.id)
               } else if (!event.nativeEvent.isComposing && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                 event.preventDefault()
+                if (filtered.length === 0) return
                 const next = event.key === 'ArrowDown' ? activeIndex + 1 : activeIndex - 1
-                setActiveId(filtered[(next + filtered.length) % filtered.length]?.id ?? '')
+                const target = filtered[(next + filtered.length) % filtered.length]
+                setActiveId(target ? target.id : null)
               }
             }}
             placeholder="Escribe para buscar…"
@@ -180,7 +226,7 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
                 className={`flex min-h-12 cursor-pointer items-center gap-2 px-3 py-3 text-sm [overflow-wrap:anywhere] ${choice.id === active?.id ? 'bg-[#e3eddf] outline -outline-offset-2 outline-[#315c49]' : 'hover:bg-[#edf3ea]'}`}
                 data-active={choice.id === active?.id}
                 id={`${listId}-${index}`}
-                key={choice.id}
+                key={choice.id || '__root__'}
                 onClick={() => select(choice.id)}
                 onPointerDown={(event) => { if (event.pointerType !== 'touch') event.preventDefault() }}
                 role="option"
@@ -194,7 +240,11 @@ export function CategoryPicker({ id, categories, options, value, disabled = fals
             {filtered.length ? `${filtered.length} categorías disponibles` : 'No encontramos categorías con esa búsqueda'}
           </p>
           <div className="mt-2 flex flex-wrap justify-between gap-2">
-            <button className="min-h-11 px-2 text-sm font-semibold text-[#52675d] disabled:opacity-50" disabled={!value} onClick={() => select('')} type="button">Limpiar selección</button>
+            {clearLabel !== null ? (
+              <button className="min-h-11 px-2 text-sm font-semibold text-[#52675d] disabled:opacity-50" disabled={!value} onClick={() => select('')} type="button">
+                {clearLabel}
+              </button>
+            ) : <span />}
             <button className="min-h-11 px-2 text-sm font-semibold text-[#315c49]" onClick={close} type="button">Cerrar selector</button>
           </div>
         </div>

@@ -95,8 +95,10 @@ export function TaskPlanningSection({
   const selectedTask = unscheduledTasks.find((t) => t.id === selectedTaskId) ?? null
 
   const taskDuration = selectedTask
-    ? (durationInputs[selectedTask.id]
-      ? Number(durationInputs[selectedTask.id])
+    ? (durationInputs[selectedTask.id] !== undefined
+      ? (/^\d+$/.test(durationInputs[selectedTask.id].trim())
+        ? Number(durationInputs[selectedTask.id].trim())
+        : null)
       : selectedTask.estimated_minutes ?? null)
     : null
 
@@ -282,12 +284,14 @@ export function TaskPlanningSection({
                       <input
                         className="w-16 rounded-lg border border-[#d6e1d3] px-2 py-1 text-center text-xs"
                         id={`duration-${task.id}`}
+                        inputMode="numeric"
                         min={1}
-                        max={1000}
+                        max={1000000}
                         onChange={(e) => {
                           setDurationInputs((prev) => ({ ...prev, [task.id]: e.target.value }))
                         }}
                         placeholder="min"
+                        step={1}
                         type="number"
                         value={currentDurationInput}
                       />
