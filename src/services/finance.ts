@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import type {
   AccountInput,
   BankCardAccountLink,
+  BankEmailAlias,
   BankNotification,
   CategoryInput,
   ConfirmNotificationTransactionInput,
@@ -54,6 +55,7 @@ export async function fetchFinanceData() {
     fixedExpensePeriodsResult,
     bankNotificationsResult,
     cardLinksResult,
+    bankEmailAliasResult,
   ] = await Promise.all([
     api.from('financial_accounts').select('*').order('created_at'),
     api.from('financial_categories').select('*').order('kind').order('parent_id', { nullsFirst: true }).order('name'),
@@ -63,6 +65,7 @@ export async function fetchFinanceData() {
     api.from('fixed_expense_periods').select('*').order('due_date'),
     api.from('bank_notifications').select('*').order('occurred_on', { ascending: false }).order('occurred_time', { ascending: false }),
     api.from('bank_card_account_links').select('*'),
+    api.from('bank_email_aliases').select('*').eq('is_current', true).maybeSingle(),
   ])
 
   if (accountsResult.error) fail('No pudimos cargar tus cuentas.')
@@ -72,6 +75,7 @@ export async function fetchFinanceData() {
 
   const missingNotificationsSchema = isMissingBankInboxSchemaError(bankNotificationsResult.error)
   const missingLinksSchema = isMissingBankInboxSchemaError(cardLinksResult.error)
+  const missingEmailAliasSchema = isMissingBankInboxSchemaError(bankEmailAliasResult.error)
 
   if (bankNotificationsResult.error && !missingNotificationsSchema) {
     fail('No pudimos cargar tus avisos bancarios.')
@@ -79,8 +83,12 @@ export async function fetchFinanceData() {
   if (cardLinksResult.error && !missingLinksSchema) {
     fail('No pudimos cargar los enlaces de tarjetas.')
   }
+  if (bankEmailAliasResult.error && !missingEmailAliasSchema) {
+    fail('No pudimos cargar la conexión de correo bancario.')
+  }
 
   const bankInboxAvailable = !missingNotificationsSchema && !missingLinksSchema
+  const bankEmailAvailable = bankInboxAvailable && !missingEmailAliasSchema
 
   return {
     accounts: accountsResult.data as FinancialAccount[],
@@ -90,6 +98,8 @@ export async function fetchFinanceData() {
     fixedExpenseVersions: fixedExpenseVersionsResult.data as FixedExpenseVersion[],
     fixedExpensePeriods: fixedExpensePeriodsResult.data as FixedExpensePeriod[],
     bankInboxAvailable,
+    bankEmailAvailable,
+    bankEmailAlias: bankEmailAvailable ? ((bankEmailAliasResult.data as BankEmailAlias | null) ?? null) : null,
     bankNotifications: bankInboxAvailable ? ((bankNotificationsResult.data ?? []) as BankNotification[]) : [],
     cardAccountLinks: bankInboxAvailable ? ((cardLinksResult.data ?? []) as BankCardAccountLink[]) : [],
   }
@@ -331,4 +341,49 @@ export async function saveCardAccountLink(
     fail('La bandeja «Movimientos por revisar» no está disponible en la base de datos.')
   }
   if (error) fail(error.message || 'No pudimos guardar la asociación de tarjeta o cuenta.')
+}
+
+export async function ensureOrReplaceBankEmailAlias(replace = false): Promise<BankEmailAlias> {
+  const { data, error } = await client().rpc('ensure_or_replace_bank_email_alias', {
+    p_replace: replace,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La recepción automática por correo aún no está instalada en la base de datos.')
+  }
+  if (error) fail(error.message || 'No pudimos generar la dirección privada de recepción.')
+  const created = data as BankEmailAlias | null
+  if (!created || typeof created.id !== 'string') {
+    fail('No recibimos confirmación del servidor al generar la dirección privada.')
+  }
+  return created
+}
+
+export async function confirmBankEmailAlias(aliasId: string): Promise<BankEmailAlias> {
+  const { data, error } = await client().rpc('confirm_bank_email_alias', {
+    p_alias_id: aliasId,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La recepción automática por correo aún no está instalada en la base de datos.')
+  }
+  if (error) fail(error.message || 'No pudimos marcar la dirección como confirmada.')
+  const confirmed = data as BankEmailAlias | null
+  if (!confirmed || typeof confirmed.id !== 'string') {
+    fail('No recibimos confirmación del servidor al activar la dirección.')
+  }
+  return confirmed
+}
+
+export async function disableBankEmailAlias(aliasId: string): Promise<BankEmailAlias> {
+  const { data, error } = await client().rpc('disable_bank_email_alias', {
+    p_alias_id: aliasId,
+  })
+  if (isMissingBankInboxSchemaError(error)) {
+    fail('La recepción automática por correo aún no está instalada en la base de datos.')
+  }
+  if (error) fail(error.message || 'No pudimos desactivar la dirección de recepción.')
+  const disabled = data as BankEmailAlias | null
+  if (!disabled || typeof disabled.id !== 'string') {
+    fail('No recibimos confirmación del servidor al desactivar la dirección.')
+  }
+  return disabled
 }

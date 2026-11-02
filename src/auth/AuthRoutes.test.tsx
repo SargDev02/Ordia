@@ -1,7 +1,7 @@
 import type { AuthChangeEvent, Session, SupabaseClient } from '@supabase/supabase-js'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthProvider } from './AuthContext'
 import { AppRoutes } from './AuthRoutes'
@@ -66,10 +66,22 @@ function createFakeClient(initialSession: Session | null, pending = false) {
   }
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return (
+    <output data-testid="current-location">
+      {location.pathname}
+      {location.search}
+      {location.hash}
+    </output>
+  )
+}
+
 function renderRoutes(client: SupabaseClient, initialPath = '/') {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <AuthProvider client={client} configured>
+        <LocationProbe />
         <AppRoutes />
       </AuthProvider>
     </MemoryRouter>,
@@ -142,5 +154,20 @@ describe('rutas y sesión', () => {
     expect(fake.signOut).toHaveBeenCalledOnce()
     expect(await screen.findByRole('heading', { name: 'Inicia sesión' })).toBeInTheDocument()
     expect(screen.queryByText('usuario@ordia.test')).not.toBeInTheDocument()
+  })
+
+  it('conserva el enlace profundo /?bandeja=bancaria#movimientos-por-revisar tras iniciar sesión', async () => {
+    const fake = createFakeClient(null)
+    renderRoutes(fake.client, '/?bandeja=bancaria#movimientos-por-revisar')
+
+    expect(await screen.findByRole('heading', { name: 'Inicia sesión' })).toBeInTheDocument()
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/iniciar-sesion')
+
+    act(() => fake.emit('SIGNED_IN', sessionFor('bandeja@ordia.test')))
+
+    expect(await screen.findByText('bandeja@ordia.test')).toBeInTheDocument()
+    expect(screen.getByTestId('current-location')).toHaveTextContent(
+      '/?bandeja=bancaria#movimientos-por-revisar',
+    )
   })
 })

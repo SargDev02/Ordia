@@ -12,18 +12,27 @@ const FinancePage = lazy(() => import('../pages/FinancePage'))
 const TasksPage = lazy(() => import('../pages/TasksPage'))
 const CalendarPage = lazy(() => import('../pages/CalendarPage'))
 
+function sanitizeInternalReturnPath(candidate: unknown): string {
+  if (typeof candidate !== 'string') return '/'
+  if (!candidate.startsWith('/') || candidate.startsWith('//')) return '/'
+  return candidate
+}
+
 function ProtectedRoute() {
   const { session } = useAuth()
   const location = useLocation()
+  const requestedTarget = `${location.pathname}${location.search}${location.hash}`
 
   return session
     ? <TasksProvider key={session.user.id} userId={session.user.id}><Outlet /></TasksProvider>
-    : <Navigate to="/iniciar-sesion" replace state={{ from: location.pathname }} />
+    : <Navigate to="/iniciar-sesion" replace state={{ from: requestedTarget }} />
 }
 
 function PublicOnlyRoute() {
   const { session } = useAuth()
-  return session ? <Navigate to="/" replace /> : <Outlet />
+  const location = useLocation()
+  const target = sanitizeInternalReturnPath((location.state as { from?: unknown } | null)?.from)
+  return session ? <Navigate to={target} replace /> : <Outlet />
 }
 
 export function AppRoutes() {

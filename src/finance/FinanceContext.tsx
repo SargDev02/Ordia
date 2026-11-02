@@ -4,6 +4,7 @@ import { supabase } from '../services/supabase'
 import {
   archiveAccount as archiveAccountRequest,
   archiveCategory as archiveCategoryRequest,
+  confirmBankEmailAlias as confirmBankEmailAliasRequest,
   confirmBankNotificationAsTransaction as confirmBankNotificationAsTransactionRequest,
   confirmBankNotificationAsTransfer as confirmBankNotificationAsTransferRequest,
   createAccount as createAccountRequest,
@@ -12,7 +13,9 @@ import {
   createTransaction as createTransactionRequest,
   createFixedExpense as createFixedExpenseRequest,
   deleteTransaction as deleteTransactionRequest,
+  disableBankEmailAlias as disableBankEmailAliasRequest,
   dismissBankNotification as dismissBankNotificationRequest,
+  ensureOrReplaceBankEmailAlias as ensureOrReplaceBankEmailAliasRequest,
   fetchFinanceData,
   linkBankNotificationToTransaction as linkBankNotificationToTransactionRequest,
   pauseFixedExpense as pauseFixedExpenseRequest,
@@ -28,6 +31,7 @@ import {
 } from '../services/finance'
 import type {
   BankCardAccountLink,
+  BankEmailAlias,
   BankNotification,
   FinancialAccount,
   FinancialCategory,
@@ -48,6 +52,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [fixedExpensePeriods, setFixedExpensePeriods] = useState<FixedExpensePeriod[]>([])
   const [fixedExpenseVersions, setFixedExpenseVersions] = useState<FixedExpenseVersion[]>([])
   const [bankInboxAvailable, setBankInboxAvailable] = useState(true)
+  const [bankEmailAvailable, setBankEmailAvailable] = useState(true)
+  const [bankEmailAlias, setBankEmailAlias] = useState<BankEmailAlias | null>(null)
   const [bankNotifications, setBankNotifications] = useState<BankNotification[]>([])
   const [cardAccountLinks, setCardAccountLinks] = useState<BankCardAccountLink[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -70,6 +76,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       setFixedExpensePeriods(data.fixedExpensePeriods)
       setFixedExpenseVersions(data.fixedExpenseVersions)
       setBankInboxAvailable(data.bankInboxAvailable)
+      setBankEmailAvailable(data.bankEmailAvailable)
+      setBankEmailAlias(data.bankEmailAlias)
       setBankNotifications(data.bankNotifications)
       setCardAccountLinks(data.cardAccountLinks)
       setError('')
@@ -114,6 +122,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bank_email_aliases', filter }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bank_email_aliases', filter }, scheduleRefresh)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('connected')
@@ -147,6 +157,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     realtimeStatus,
     transactions,
     bankInboxAvailable,
+    bankEmailAvailable,
+    bankEmailAlias,
     bankNotifications,
     cardAccountLinks,
     refresh,
@@ -182,7 +194,25 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       runAndRefresh(() => dismissBankNotificationRequest(notificationId)),
     saveCardAccountLink: (identifierType, lastDigits, accountId) =>
       runAndRefresh(() => saveCardAccountLinkRequest(identifierType, lastDigits, accountId)),
-  }), [accounts, bankInboxAvailable, bankNotifications, cardAccountLinks, categories, error, fixedExpensePeriods, fixedExpenseVersions, fixedExpenses, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId])
+    ensureOrReplaceBankEmailAlias: async (replace = false) => {
+      setError('')
+      const result = await ensureOrReplaceBankEmailAliasRequest(replace)
+      await refresh()
+      return result
+    },
+    confirmBankEmailAlias: async (aliasId) => {
+      setError('')
+      const result = await confirmBankEmailAliasRequest(aliasId)
+      await refresh()
+      return result
+    },
+    disableBankEmailAlias: async (aliasId) => {
+      setError('')
+      const result = await disableBankEmailAliasRequest(aliasId)
+      await refresh()
+      return result
+    },
+  }), [accounts, bankEmailAlias, bankEmailAvailable, bankInboxAvailable, bankNotifications, cardAccountLinks, categories, error, fixedExpensePeriods, fixedExpenseVersions, fixedExpenses, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId])
 
   return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>
 }

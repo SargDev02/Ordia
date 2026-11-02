@@ -84,6 +84,7 @@ Deno.serve(async (request) => {
         .from('push_subscriptions')
         .select('id,user_id,endpoint,p256dh,auth')
         .eq('active', true)
+        .eq('notify_fixed_expenses', true)
         .in('user_id', userBatch)
         .order('id', { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1)

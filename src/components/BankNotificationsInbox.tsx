@@ -8,20 +8,28 @@ import {
 import { TRANSACTION_KIND_LABELS } from '../finance/constants'
 import type {
   BankCardAccountLink,
+  BankEmailAlias,
   BankNotification,
   FinancialAccount,
   FinancialCategory,
   FinancialTransaction,
 } from '../types/finance'
+import { BankEmailConnectionPanel } from './BankEmailConnectionPanel'
 import { CategoryPicker } from './CategoryPicker'
 
 interface BankNotificationsInboxProps {
   isAvailable?: boolean
+  emailAvailable?: boolean
+  emailAlias?: BankEmailAlias | null
+  inboundDomainOverride?: string
   notifications: BankNotification[]
   cardAccountLinks: BankCardAccountLink[]
   accounts: FinancialAccount[]
   categories: FinancialCategory[]
   transactions: FinancialTransaction[]
+  onEnsureOrReplaceAlias?: (replace?: boolean) => Promise<BankEmailAlias>
+  onConfirmAlias?: (aliasId: string) => Promise<BankEmailAlias>
+  onDisableAlias?: (aliasId: string) => Promise<BankEmailAlias>
   onCreateNotification: (input: {
     bank_name?: string
     notification_type: 'transfer_received' | 'purchase' | 'transfer_sent'
@@ -70,11 +78,17 @@ type ResolutionMode = 'transaction' | 'transfer' | 'link' | 'dismiss'
 
 export function BankNotificationsInbox({
   isAvailable = true,
+  emailAvailable = true,
+  emailAlias = null,
+  inboundDomainOverride,
   notifications,
   cardAccountLinks,
   accounts,
   categories,
   transactions,
+  onEnsureOrReplaceAlias,
+  onConfirmAlias,
+  onDisableAlias,
   onCreateNotification,
   onConfirmTransaction,
   onConfirmTransfer,
@@ -409,6 +423,15 @@ export function BankNotificationsInbox({
         </div>
       ) : (
         <>
+          <BankEmailConnectionPanel
+            alias={emailAlias}
+            inboundDomainOverride={inboundDomainOverride}
+            isAvailable={emailAvailable}
+            onConfirmAlias={onConfirmAlias}
+            onDisableAlias={onDisableAlias}
+            onEnsureOrReplaceAlias={onEnsureOrReplaceAlias}
+          />
+
           {/* Formulario para pegar texto de aviso */}
           <form onSubmit={handlePasteSubmit} className="mt-5 rounded-2xl border border-[#e2eae0] bg-[#f8faf6] p-4">
             <label
@@ -461,12 +484,26 @@ export function BankNotificationsInbox({
             ) : (
               <div className="space-y-3">
                 {pendingNotifications.map((notification) => {
-                  const isPossibleDuplicate = pendingNotifications.some(
+                  const knownAccountForItem = resolveKnownAccountId(
+                    notification,
+                    cardAccountLinks,
+                    accounts,
+                  )
+                  const hasMatchingNotification = notifications.some(
                     (other) =>
                       other.id !== notification.id &&
+                      other.status !== 'dismissed' &&
                       other.amount === notification.amount &&
                       other.occurred_on === notification.occurred_on,
                   )
+                  const hasMatchingUnlinkedTransaction = transactions.some(
+                    (tx) =>
+                      !alreadyLinkedTransactionIds.has(tx.id) &&
+                      tx.occurred_on === notification.occurred_on &&
+                      isTransactionCompatibleWithNotification(tx, notification, knownAccountForItem),
+                  )
+                  const isPossibleDuplicate =
+                    hasMatchingNotification || hasMatchingUnlinkedTransaction
 
                   const isPurchase = notification.notification_type === 'purchase'
                   const isTransferReceived = notification.notification_type === 'transfer_received'
@@ -489,13 +526,18 @@ export function BankNotificationsInbox({
                           <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${typeColor}`}>
                             {typeLabel}
                           </span>
+                          {notification.source_channel === 'gmail' && (
+                            <span className="rounded-md bg-[#eef4fb] px-2 py-0.5 text-xs font-medium text-[#2c587c]">
+                              Correo reenviado
+                            </span>
+                          )}
                           <span className="text-xs text-[#718279]">
                             {notification.occurred_on} a las {notification.occurred_time}
                           </span>
                           {isPossibleDuplicate && (
                             <span
                               className="rounded-md bg-[#fff3cd] px-2 py-0.5 text-xs font-medium text-[#856404]"
-                              title="Coincide con otro aviso pendiente en fecha e importe"
+                              title="Coincide en fecha e importe con otro aviso o movimiento registrado"
                             >
                               Posible coincidencia
                             </span>

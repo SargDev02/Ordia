@@ -2,6 +2,7 @@ import { createContext } from 'react'
 import type {
   AccountInput,
   BankCardAccountLink,
+  BankEmailAlias,
   BankNotification,
   CategoryInput,
   ConfirmNotificationTransactionInput,
@@ -27,6 +28,8 @@ export interface FinanceContextValue {
   fixedExpensePeriods: FixedExpensePeriod[]
   fixedExpenseVersions: FixedExpenseVersion[]
   bankInboxAvailable?: boolean
+  bankEmailAvailable?: boolean
+  bankEmailAlias?: BankEmailAlias | null
   bankNotifications: BankNotification[]
   cardAccountLinks: BankCardAccountLink[]
   error: string
@@ -56,6 +59,9 @@ export interface FinanceContextValue {
   linkBankNotificationToTransaction: (notificationId: string, transactionId: string) => Promise<void>
   dismissBankNotification: (notificationId: string) => Promise<void>
   saveCardAccountLink: (identifierType: 'card' | 'account', lastDigits: string, accountId: string) => Promise<void>
+  ensureOrReplaceBankEmailAlias?: (replace?: boolean) => Promise<BankEmailAlias>
+  confirmBankEmailAlias?: (aliasId: string) => Promise<BankEmailAlias>
+  disableBankEmailAlias?: (aliasId: string) => Promise<BankEmailAlias>
 }
 
 export const FinanceContext = createContext<FinanceContextValue | null>(null)

@@ -42,11 +42,48 @@ export function getBogotaMonthBounds(now = new Date()) {
   }
 }
 
+export function normalizeCategorySearch(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[→>]/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+/**
+ * Expande las categorías seleccionadas: elegir una categoría principal incluye
+ * tanto sus movimientos directos como los de sus subcategorías; elegir solo una
+ * subcategoría conserva únicamente esa subcategoría.
+ */
+export function expandSelectedCategoryIds(
+  selectedIds: ReadonlySet<string>,
+  categories: FinancialCategory[],
+): Set<string> {
+  const expanded = new Set<string>(selectedIds)
+  if (selectedIds.size === 0) return expanded
+
+  let added = true
+  while (added) {
+    added = false
+    for (const category of categories) {
+      if (category.parent_id && expanded.has(category.parent_id) && !expanded.has(category.id)) {
+        expanded.add(category.id)
+        added = true
+      }
+    }
+  }
+
+  return expanded
+}
+
 export interface TransactionFilters {
   accountIds: ReadonlySet<string>
   dateFrom?: string
   dateTo?: string
   kind?: TransactionKind | ''
+  categoryIds?: ReadonlySet<string> | null
 }
 
 export function filterTransactions(transactions: FinancialTransaction[], filters: TransactionFilters) {
@@ -58,6 +95,9 @@ export function filterTransactions(transactions: FinancialTransaction[], filters
     if (filters.kind && transaction.kind !== filters.kind) return false
     if (filters.dateFrom && transaction.occurred_on < filters.dateFrom) return false
     if (filters.dateTo && transaction.occurred_on > filters.dateTo) return false
+    if (filters.categoryIds !== undefined && filters.categoryIds !== null) {
+      if (!transaction.category_id || !filters.categoryIds.has(transaction.category_id)) return false
+    }
     return true
   })
 }
@@ -84,7 +124,12 @@ export function calculatePeriodSummary(
   const expensesByCategory = new Map<string, bigint>()
   const categoriesById = new Map(categories.map((category) => [category.id, category]))
 
-  for (const transaction of filterTransactions(transactions, { ...filters, dateFrom: start, dateTo: end })) {
+  for (const transaction of filterTransactions(transactions, {
+    accountIds: filters.accountIds,
+    kind: filters.kind,
+    dateFrom: start,
+    dateTo: end,
+  })) {
     const amount = BigInt(transaction.amount)
     if (transaction.kind === 'income') income += amount
     if (transaction.kind === 'expense') {

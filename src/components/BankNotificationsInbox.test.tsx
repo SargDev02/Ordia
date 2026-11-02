@@ -1006,4 +1006,339 @@ describe('BankNotificationsInbox', () => {
       )
     })
   })
+
+  it('muestra «Conectar mi correo» en sus 4 estados, distingue dirección confirmada de primer aviso recibido y no simula un dominio inexistente', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onEnsureOrReplaceAlias = vi.fn()
+    const onConfirmAlias = vi.fn()
+    const onDisableAlias = vi.fn()
+
+    // 1. Sin dominio configurado: explica que falta configurar el proveedor sin mostrar una dirección inventada
+    const { rerender } = render(
+      <BankNotificationsInbox
+        notifications={[]}
+        cardAccountLinks={mockCardAccountLinks}
+        accounts={mockAccounts}
+        categories={mockCategories}
+        transactions={[]}
+        emailAlias={null}
+        inboundDomainOverride=""
+        onEnsureOrReplaceAlias={onEnsureOrReplaceAlias}
+        onConfirmAlias={onConfirmAlias}
+        onDisableAlias={onDisableAlias}
+        onCreateNotification={vi.fn()}
+        onConfirmTransaction={vi.fn()}
+        onConfirmTransfer={vi.fn()}
+        onLinkTransaction={vi.fn()}
+        onDismissNotification={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Sin configurar · Dominio pendiente')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar mi correo' }))
+    expect(
+      screen.getByText(/Proveedor y dominio de correo entrante pendientes de configurar/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Generar dirección privada' })).not.toBeInTheDocument()
+
+    // 2. Con dominio configurado y sin alias («Sin configurar») -> permite generar dirección privada
+    onEnsureOrReplaceAlias.mockResolvedValueOnce({
+      id: 'alias-1',
+      user_id: 'user-1',
+      alias_local_part: 'bnc_0123456789abcdef0123456789abcdef',
+      status: 'pending_confirmation',
+      is_current: true,
+      confirmation_code: null,
+      confirmation_url: null,
+      confirmation_received_at: null,
+      confirmed_at: null,
+      first_notification_at: null,
+      last_notification_at: null,
+      disabled_at: null,
+      disabled_reason: null,
+      created_at: '2026-11-02T01:00:00Z',
+      updated_at: '2026-11-02T01:00:00Z',
+    })
+
+    rerender(
+      <BankNotificationsInbox
+        notifications={[]}
+        cardAccountLinks={mockCardAccountLinks}
+        accounts={mockAccounts}
+        categories={mockCategories}
+        transactions={[]}
+        emailAlias={null}
+        inboundDomainOverride="avisos.resend.app"
+        onEnsureOrReplaceAlias={onEnsureOrReplaceAlias}
+        onConfirmAlias={onConfirmAlias}
+        onDisableAlias={onDisableAlias}
+        onCreateNotification={vi.fn()}
+        onConfirmTransaction={vi.fn()}
+        onConfirmTransfer={vi.fn()}
+        onLinkTransaction={vi.fn()}
+        onDismissNotification={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Sin configurar')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Generar dirección privada' }))
+    await waitFor(() => expect(onEnsureOrReplaceAlias).toHaveBeenCalledWith(false))
+
+    // 3. Estado «Pendiente de confirmación» con código y enlace manual de Gmail (sin reenvío global)
+    rerender(
+      <BankNotificationsInbox
+        notifications={[]}
+        cardAccountLinks={mockCardAccountLinks}
+        accounts={mockAccounts}
+        categories={mockCategories}
+        transactions={[]}
+        emailAlias={{
+          id: 'alias-1',
+          user_id: 'user-1',
+          alias_local_part: 'bnc_0123456789abcdef0123456789abcdef',
+          status: 'pending_confirmation',
+          is_current: true,
+          confirmation_code: '847291034',
+          confirmation_url: 'https://isolated.mail.google.com/mail/vf-token',
+          confirmation_received_at: '2026-11-02T01:05:00Z',
+          confirmed_at: null,
+          first_notification_at: null,
+          last_notification_at: null,
+          disabled_at: null,
+          disabled_reason: null,
+          created_at: '2026-11-02T01:00:00Z',
+          updated_at: '2026-11-02T01:05:00Z',
+        }}
+        inboundDomainOverride="avisos.resend.app"
+        onEnsureOrReplaceAlias={onEnsureOrReplaceAlias}
+        onConfirmAlias={onConfirmAlias}
+        onDisableAlias={onDisableAlias}
+        onCreateNotification={vi.fn()}
+        onConfirmTransaction={vi.fn()}
+        onConfirmTransfer={vi.fn()}
+        onLinkTransaction={vi.fn()}
+        onDismissNotification={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Pendiente de confirmación · Solicitud recibida')).toBeInTheDocument()
+    expect(
+      screen.getByText('bnc_0123456789abcdef0123456789abcdef@avisos.resend.app'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('847291034')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Confirmar reenvío en Google Mail' })).toHaveAttribute(
+      'href',
+      'https://isolated.mail.google.com/mail/vf-token',
+    )
+    expect(
+      screen.getByText(/No actives el reenvío general de todo tu correo/i),
+    ).toBeInTheDocument()
+
+    onConfirmAlias.mockResolvedValueOnce({
+      id: 'alias-1',
+      user_id: 'user-1',
+      alias_local_part: 'bnc_0123456789abcdef0123456789abcdef',
+      status: 'active',
+      is_current: true,
+      confirmation_code: null,
+      confirmation_url: null,
+      confirmation_received_at: '2026-11-02T01:05:00Z',
+      confirmed_at: '2026-11-02T01:06:00Z',
+      first_notification_at: null,
+      last_notification_at: null,
+      disabled_at: null,
+      disabled_reason: null,
+      created_at: '2026-11-02T01:00:00Z',
+      updated_at: '2026-11-02T01:06:00Z',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Ya confirmé la dirección en Gmail' }))
+    await waitFor(() => expect(onConfirmAlias).toHaveBeenCalledWith('alias-1'))
+
+    // 4. Estado «Activo · Dirección confirmada» vs «Activo · Primer aviso recibido»
+    rerender(
+      <BankNotificationsInbox
+        notifications={[]}
+        cardAccountLinks={mockCardAccountLinks}
+        accounts={mockAccounts}
+        categories={mockCategories}
+        transactions={[]}
+        emailAlias={{
+          id: 'alias-1',
+          user_id: 'user-1',
+          alias_local_part: 'bnc_0123456789abcdef0123456789abcdef',
+          status: 'active',
+          is_current: true,
+          confirmation_code: null,
+          confirmation_url: null,
+          confirmation_received_at: '2026-11-02T01:05:00Z',
+          confirmed_at: '2026-11-02T01:06:00Z',
+          first_notification_at: null,
+          last_notification_at: null,
+          disabled_at: null,
+          disabled_reason: null,
+          created_at: '2026-11-02T01:00:00Z',
+          updated_at: '2026-11-02T01:06:00Z',
+        }}
+        inboundDomainOverride="avisos.resend.app"
+        onEnsureOrReplaceAlias={onEnsureOrReplaceAlias}
+        onConfirmAlias={onConfirmAlias}
+        onDisableAlias={onDisableAlias}
+        onCreateNotification={vi.fn()}
+        onConfirmTransaction={vi.fn()}
+        onConfirmTransfer={vi.fn()}
+        onLinkTransaction={vi.fn()}
+        onDismissNotification={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Activo · Dirección confirmada')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Todavía no se ha recibido el primer aviso bancario reenviado/i),
+    ).toBeInTheDocument()
+
+    rerender(
+      <BankNotificationsInbox
+        notifications={[]}
+        cardAccountLinks={mockCardAccountLinks}
+        accounts={mockAccounts}
+        categories={mockCategories}
+        transactions={[]}
+        emailAlias={{
+          id: 'alias-1',
+          user_id: 'user-1',
+          alias_local_part: 'bnc_0123456789abcdef0123456789abcdef',
+          status: 'active',
+          is_current: true,
+          confirmation_code: null,
+          confirmation_url: null,
+          confirmation_received_at: '2026-11-02T01:05:00Z',
+          confirmed_at: '2026-11-02T01:06:00Z',
+          first_notification_at: '2026-11-02T02:10:00Z',
+          last_notification_at: '2026-11-02T02:10:00Z',
+          disabled_at: null,
+          disabled_reason: null,
+          created_at: '2026-11-02T01:00:00Z',
+          updated_at: '2026-11-02T02:10:00Z',
+        }}
+        inboundDomainOverride="avisos.resend.app"
+        onEnsureOrReplaceAlias={onEnsureOrReplaceAlias}
+        onConfirmAlias={onConfirmAlias}
+        onDisableAlias={onDisableAlias}
+        onCreateNotification={vi.fn()}
+        onConfirmTransaction={vi.fn()}
+        onConfirmTransfer={vi.fn()}
+        onLinkTransaction={vi.fn()}
+        onDismissNotification={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Activo · Primer aviso recibido')).toBeInTheDocument()
+
+    // Desactivar y reemplazar
+    fireEvent.click(screen.getByRole('button', { name: 'Reemplazar' }))
+    await waitFor(() => expect(onEnsureOrReplaceAlias).toHaveBeenCalledWith(true))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Desactivar' }))
+    await waitFor(() => expect(onDisableAlias).toHaveBeenCalledWith('alias-1'))
+
+    // 5. Estado «Desactivado»
+    rerender(
+      <BankNotificationsInbox
+        notifications={[]}
+        cardAccountLinks={mockCardAccountLinks}
+        accounts={mockAccounts}
+        categories={mockCategories}
+        transactions={[]}
+        emailAlias={{
+          id: 'alias-1',
+          user_id: 'user-1',
+          alias_local_part: 'bnc_0123456789abcdef0123456789abcdef',
+          status: 'disabled',
+          is_current: true,
+          confirmation_code: null,
+          confirmation_url: null,
+          confirmation_received_at: '2026-11-02T01:05:00Z',
+          confirmed_at: '2026-11-02T01:06:00Z',
+          first_notification_at: null,
+          last_notification_at: null,
+          disabled_at: '2026-11-02T02:30:00Z',
+          disabled_reason: 'user',
+          created_at: '2026-11-02T01:00:00Z',
+          updated_at: '2026-11-02T02:30:00Z',
+        }}
+        inboundDomainOverride="avisos.resend.app"
+        onEnsureOrReplaceAlias={onEnsureOrReplaceAlias}
+        onConfirmAlias={onConfirmAlias}
+        onDisableAlias={onDisableAlias}
+        onCreateNotification={vi.fn()}
+        onConfirmTransaction={vi.fn()}
+        onConfirmTransfer={vi.fn()}
+        onLinkTransaction={vi.fn()}
+        onDismissNotification={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Desactivado')).toBeInTheDocument()
+    expect(screen.getByText('Recepción automática desactivada')).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('señala «Posible coincidencia» y «Correo reenviado» cuando un aviso automático coincide con un movimiento ya registrado o pegado manualmente', () => {
+    const autoNotification: BankNotification = {
+      id: 'notif-gmail-1',
+      user_id: 'user-1',
+      client_request_id: 'req-g1',
+      bank_name: 'Bancolombia',
+      source_channel: 'gmail',
+      notification_type: 'purchase',
+      amount: 39900,
+      currency: 'COP',
+      occurred_on: '2026-10-17',
+      occurred_time: '13:17',
+      merchant: 'HOMECENTER RIONEGRO',
+      account_last_digits: null,
+      card_last_digits: '0541',
+      card_type: 'debit',
+      counterparty_name: null,
+      counterparty_account_last_digits: null,
+      status: 'pending',
+      resolved_transaction_id: null,
+      resolution_request_id: null,
+      dismissed_at: null,
+      resolved_at: null,
+      created_at: '2026-10-17T13:18:00Z',
+      updated_at: '2026-10-17T13:18:00Z',
+    }
+
+    const alreadyRegisteredTx: FinancialTransaction = {
+      id: 'tx-manual-1',
+      user_id: 'user-1',
+      kind: 'expense',
+      account_id: 'acc-1',
+      destination_account_id: null,
+      amount: 39900,
+      occurred_on: '2026-10-17',
+      category_id: 'cat-hogar',
+      description: 'Compra Homecenter registrada antes',
+      client_request_id: 'req-tx-1',
+      deleted_at: null,
+      created_at: '2026-10-17T13:17:30Z',
+      updated_at: '2026-10-17T13:17:30Z',
+    }
+
+    render(
+      <BankNotificationsInbox
+        notifications={[autoNotification]}
+        cardAccountLinks={mockCardAccountLinks}
+        accounts={mockAccounts}
+        categories={mockCategories}
+        transactions={[alreadyRegisteredTx]}
+        onCreateNotification={vi.fn()}
+        onConfirmTransaction={vi.fn()}
+        onConfirmTransfer={vi.fn()}
+        onLinkTransaction={vi.fn()}
+        onDismissNotification={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Correo reenviado')).toBeInTheDocument()
+    expect(screen.getByText('Posible coincidencia')).toBeInTheDocument()
+  })
 })

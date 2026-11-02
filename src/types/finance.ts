@@ -136,6 +136,25 @@ export interface FixedExpensePaymentInput {
 
 export type BankNotificationType = 'transfer_received' | 'purchase' | 'transfer_sent'
 export type BankNotificationStatus = 'pending' | 'resolved' | 'dismissed'
+export type BankEmailAliasStatus = 'pending_confirmation' | 'active' | 'disabled'
+
+export interface BankEmailAlias {
+  id: string
+  user_id: string
+  alias_local_part: string
+  status: BankEmailAliasStatus
+  is_current: boolean
+  confirmation_code: string | null
+  confirmation_url: string | null
+  confirmation_received_at: string | null
+  confirmed_at: string | null
+  first_notification_at: string | null
+  last_notification_at: string | null
+  disabled_at: string | null
+  disabled_reason: 'user' | 'replaced' | null
+  created_at: string
+  updated_at: string
+}
 
 export interface BankCardAccountLink {
   id: string

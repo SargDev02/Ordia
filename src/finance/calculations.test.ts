@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateAccountBalance, calculatePeriodSummary, filterTransactions, getBogotaMonthBounds, getCategoryLabel } from './calculations'
+import { calculateAccountBalance, calculatePeriodSummary, expandSelectedCategoryIds, filterTransactions, getBogotaMonthBounds, getCategoryLabel } from './calculations'
 import type { FinancialAccount, FinancialCategory, FinancialTransaction, TransactionKind } from '../types/finance'
 
 function account(id: string, initialBalance = 0): FinancialAccount {
@@ -86,5 +86,47 @@ describe('cálculos financieros exactos', () => {
   it('combina cuentas, fechas y tipo', () => {
     const rows = [transaction('included', 'expense', 20), transaction('wrong-type', 'income', 40), transaction('wrong-date', 'expense', 50, { occurred_on: '2026-09-30' })]
     expect(filterTransactions(rows, { accountIds: new Set(['account-a']), dateFrom: '2026-10-01', dateTo: '2026-10-31', kind: 'expense' }).map((row) => row.id)).toEqual(['included'])
+  })
+
+  it('expande categorías padre a sus subcategorías, respeta subcategorías solas, excluye transferencias y no duplica al elegir padre e hija', () => {
+    const hierarchy = [
+      category('cat-serv', 'Servicios', 'expense'),
+      category('cat-tel', 'Telefonía', 'expense', 'cat-serv'),
+      category('cat-ene', 'Energía', 'expense', 'cat-serv'),
+      category('cat-sal', 'Salario', 'income'),
+    ]
+    const rows = [
+      transaction('tx-parent', 'expense', 40, { category_id: 'cat-serv' }),
+      transaction('tx-tel', 'expense', 60, { category_id: 'cat-tel' }),
+      transaction('tx-ene', 'expense', 80, { category_id: 'cat-ene' }),
+      transaction('tx-sal', 'income', 500, { category_id: 'cat-sal' }),
+      transaction('tx-trf', 'transfer', 100),
+    ]
+    const allAccounts = new Set(['account-a', 'account-b'])
+
+    // Padre seleccionado -> incluye padre + ambas subcategorías y excluye transferencia y salario
+    const expandedParent = expandSelectedCategoryIds(new Set(['cat-serv']), hierarchy)
+    expect(filterTransactions(rows, { accountIds: allAccounts, categoryIds: expandedParent }).map((r) => r.id)).toEqual([
+      'tx-parent',
+      'tx-tel',
+      'tx-ene',
+    ])
+
+    // Solo subcategoría -> únicamente sus movimientos
+    const expandedChild = expandSelectedCategoryIds(new Set(['cat-tel']), hierarchy)
+    expect(filterTransactions(rows, { accountIds: allAccounts, categoryIds: expandedChild }).map((r) => r.id)).toEqual([
+      'tx-tel',
+    ])
+
+    // Padre + hija seleccionados juntos -> cada movimiento aparece una sola vez
+    const expandedBoth = expandSelectedCategoryIds(new Set(['cat-serv', 'cat-tel']), hierarchy)
+    expect(filterTransactions(rows, { accountIds: allAccounts, categoryIds: expandedBoth }).map((r) => r.id)).toEqual([
+      'tx-parent',
+      'tx-tel',
+      'tx-ene',
+    ])
+
+    // Sin filtro de categoría (null) -> incluye también transferencias
+    expect(filterTransactions(rows, { accountIds: allAccounts, categoryIds: null }).map((r) => r.id)).toContain('tx-trf')
   })
 })

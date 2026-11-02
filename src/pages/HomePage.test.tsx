@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
@@ -373,5 +373,244 @@ describe('acciones financieras rápidas', () => {
     expect(inboxSection).toHaveTextContent('1 por revisar')
     expect(inboxSection).toHaveTextContent('HOMECENTER RIONEGRO')
     expect(inboxSection).toHaveTextContent('39.900')
+  })
+
+  it('filtra Movimientos por múltiples categorías y subcategorías, nombres repetidos, archivadas con historial, cuentas, fechas y transferencias sin alterar saldos, resúmenes ni sugerencias', async () => {
+    const user = userEvent.setup()
+
+    const catServicios = category('cat-servicios', 'Servicios', 'expense')
+    const catTelefonia = { ...category('cat-telefonia', 'Telefonía', 'expense'), parent_id: 'cat-servicios' }
+    const catEnergia = { ...category('cat-energia', 'Energía', 'expense'), parent_id: 'cat-servicios' }
+    const catOtrosIngreso = category('cat-otros-in', 'Otros', 'income')
+    const catOtrosGasto = category('cat-otros-ex', 'Otros', 'expense')
+    const catArchivadaUsada = {
+      ...category('cat-arch-usada', 'Viajes antiguos', 'expense'),
+      archived_at: '2026-09-01T00:00:00Z',
+    }
+    const catArchivadaSinUso = {
+      ...category('cat-arch-vacia', 'Categoría nunca usada', 'expense'),
+      archived_at: '2026-09-01T00:00:00Z',
+    }
+
+    mocks.finance.accounts = [
+      { ...account('account-a', 'Principal'), initial_balance: 500000 },
+      { ...account('account-b', 'Ahorro'), initial_balance: 200000 },
+    ]
+    mocks.finance.categories = [
+      catServicios,
+      catTelefonia,
+      catEnergia,
+      catOtrosIngreso,
+      catOtrosGasto,
+      catArchivadaUsada,
+      catArchivadaSinUso,
+    ]
+    mocks.finance.transactions = [
+      {
+        id: 'tx-servicios-padre',
+        user_id: 'user-a',
+        kind: 'expense',
+        account_id: 'account-a',
+        destination_account_id: null,
+        amount: 40000,
+        occurred_on: '2026-10-20',
+        category_id: 'cat-servicios',
+        description: 'Administración edificio',
+        client_request_id: 'r1',
+        deleted_at: null,
+        created_at: '',
+        updated_at: '',
+      },
+      {
+        id: 'tx-telefonia-hija',
+        user_id: 'user-a',
+        kind: 'expense',
+        account_id: 'account-a',
+        destination_account_id: null,
+        amount: 60000,
+        occurred_on: '2026-10-21',
+        category_id: 'cat-telefonia',
+        description: 'Plan celular octubre',
+        client_request_id: 'r2',
+        deleted_at: null,
+        created_at: '',
+        updated_at: '',
+      },
+      {
+        id: 'tx-energia-b',
+        user_id: 'user-a',
+        kind: 'expense',
+        account_id: 'account-b',
+        destination_account_id: null,
+        amount: 85000,
+        occurred_on: '2026-10-22',
+        category_id: 'cat-energia',
+        description: 'Factura energía ahorro',
+        client_request_id: 'r3',
+        deleted_at: null,
+        created_at: '',
+        updated_at: '',
+      },
+      {
+        id: 'tx-otros-ingreso',
+        user_id: 'user-a',
+        kind: 'income',
+        account_id: 'account-a',
+        destination_account_id: null,
+        amount: 120000,
+        occurred_on: '2026-10-23',
+        category_id: 'cat-otros-in',
+        description: 'Reembolso recibido',
+        client_request_id: 'r4',
+        deleted_at: null,
+        created_at: '',
+        updated_at: '',
+      },
+      {
+        id: 'tx-otros-gasto',
+        user_id: 'user-a',
+        kind: 'expense',
+        account_id: 'account-a',
+        destination_account_id: null,
+        amount: 15000,
+        occurred_on: '2026-10-24',
+        category_id: 'cat-otros-ex',
+        description: 'Gasto menor varios',
+        client_request_id: 'r5',
+        deleted_at: null,
+        created_at: '',
+        updated_at: '',
+      },
+      {
+        id: 'tx-archivada-hist',
+        user_id: 'user-a',
+        kind: 'expense',
+        account_id: 'account-a',
+        destination_account_id: null,
+        amount: 30000,
+        occurred_on: '2026-10-10',
+        category_id: 'cat-arch-usada',
+        description: 'Tiquete histórico',
+        client_request_id: 'r6',
+        deleted_at: null,
+        created_at: '',
+        updated_at: '',
+      },
+      {
+        id: 'tx-transferencia',
+        user_id: 'user-a',
+        kind: 'transfer',
+        account_id: 'account-a',
+        destination_account_id: 'account-b',
+        amount: 50000,
+        occurred_on: '2026-10-25',
+        category_id: null,
+        description: 'Paso a ahorro',
+        client_request_id: 'r7',
+        deleted_at: null,
+        created_at: '',
+        updated_at: '',
+      },
+    ]
+
+    renderHome()
+
+    const totalBalanceCard = screen.getByText('Saldo total').closest('article') as HTMLElement
+    const incomeSummaryCard = screen.getByText('Ingresos del período').closest('article') as HTMLElement
+    const expenseSummaryCard = screen.getByText('Gastos del período').closest('article') as HTMLElement
+    const categoryExpenseHeading = screen.getByRole('heading', { name: 'Gastos del período por categoría' })
+    const categoryExpenseSection = categoryExpenseHeading.closest('section') as HTMLElement
+    const suggestionsSection = screen.getByLabelText('Sugerencias y análisis financiero')
+    const inboxSection = screen.getByLabelText('Bandeja de avisos bancarios por revisar')
+
+    const initialTotalBalanceText = totalBalanceCard.textContent
+    const initialIncomeText = incomeSummaryCard.textContent
+    const initialExpenseText = expenseSummaryCard.textContent
+    const initialCategoryExpenseText = categoryExpenseSection.textContent
+    const initialSuggestionsText = suggestionsSection.textContent
+    const initialInboxText = inboxSection.textContent
+
+    // Por defecto («Todas las categorías») incluye los 7 movimientos, incluida la transferencia
+    expect(screen.getByText('7 movimientos coinciden')).toBeInTheDocument()
+    expect(screen.getByText('Paso a ahorro')).toBeInTheDocument()
+
+    // Abrir selector múltiple «Categorías»
+    await user.click(screen.getByLabelText('Categorías'))
+    const searchInput = screen.getByRole('combobox', { name: 'Buscar categorías para filtrar' })
+
+    // La categoría archivada SIN movimientos históricos no aparece; la archivada CON historial sí aparece
+    expect(screen.queryByRole('option', { name: /Categoría nunca usada/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Viajes antiguos (archivada)' })).toBeInTheDocument()
+
+    // Nombres repetidos entre ingreso y gasto se distinguen claramente
+    expect(screen.getByRole('option', { name: 'Otros · Ingreso' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Otros · Gasto' })).toBeInTheDocument()
+
+    // 1. Seleccionar únicamente la subcategoría «Servicios → Telefonía»: incluye solo su movimiento y excluye transferencias
+    await user.type(searchInput, 'telefonia')
+    await user.click(screen.getByRole('option', { name: 'Servicios → Telefonía' }))
+    expect(screen.getByText('1 movimiento coincide')).toBeInTheDocument()
+    expect(screen.getByText('Plan celular octubre')).toBeInTheDocument()
+    expect(screen.queryByText('Administración edificio')).not.toBeInTheDocument()
+    expect(screen.queryByText('Paso a ahorro')).not.toBeInTheDocument()
+
+    // 2. Seleccionar además la categoría padre «Servicios» al mismo tiempo: incluye padre + hijas sin duplicar «Plan celular octubre»
+    await user.clear(searchInput)
+    await user.click(screen.getByRole('option', { name: 'Servicios' }))
+    expect(screen.getByText('3 movimientos coinciden')).toBeInTheDocument()
+    expect(screen.getAllByText('Plan celular octubre')).toHaveLength(1)
+    expect(screen.getByText('Administración edificio')).toBeInTheDocument()
+    expect(screen.getByText('Factura energía ahorro')).toBeInTheDocument()
+
+    // 3. Combinar con filtro de cuenta (quitar Ahorro) y fecha desde 2026-10-21
+    await user.click(screen.getByRole('button', { name: 'Cerrar selector' }))
+    // Chips visibles en móvil/escritorio con botón individual para quitar
+    const chipsRegion = screen.getByLabelText('Categorías seleccionadas')
+    expect(within(chipsRegion).getByRole('button', { name: 'Quitar categoría Servicios → Telefonía' })).toBeInTheDocument()
+    expect(within(chipsRegion).getByRole('button', { name: 'Quitar categoría Servicios' })).toBeInTheDocument()
+
+    // Filtrar solo cuenta Principal y Desde 2026-10-21 -> solo queda «Plan celular octubre»
+    await user.click(screen.getByRole('checkbox', { name: 'Ahorro' }))
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-10-21' } })
+    expect(screen.getByText('1 movimiento coincide')).toBeInTheDocument()
+    expect(screen.getByText('Plan celular octubre')).toBeInTheDocument()
+    expect(screen.queryByText('Factura energía ahorro')).not.toBeInTheDocument()
+    expect(screen.queryByText('Administración edificio')).not.toBeInTheDocument()
+
+    // 4. Probar estado vacío claro cuando cero movimientos coinciden con la categoría elegida en ese rango
+    await user.click(within(chipsRegion).getByRole('button', { name: 'Quitar categoría Servicios → Telefonía' }))
+    await user.click(within(chipsRegion).getByRole('button', { name: 'Quitar categoría Servicios' }))
+    await user.click(screen.getByLabelText('Categorías'))
+    await user.click(screen.getByRole('option', { name: 'Viajes antiguos (archivada)' }))
+    await user.click(screen.getByRole('button', { name: 'Cerrar selector' }))
+    expect(screen.getByText('0 movimientos coinciden')).toBeInTheDocument()
+    expect(screen.getByText('No hay movimientos en las categorías seleccionadas')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Ningún movimiento cumple a la vez las categorías, cuentas y fechas elegidas/i),
+    ).toBeInTheDocument()
+
+    // 5. Probar distinción por ID entre «Otros · Ingreso» y «Otros · Gasto»
+    await user.click(screen.getByRole('button', { name: 'Limpiar categorías' }))
+    // «Limpiar categorías» restaura «Todas las categorías» (incluida transferencia) SIN borrar filtros de cuenta ni fecha
+    expect(screen.getByLabelText('Desde')).toHaveValue('2026-10-21')
+    expect(screen.getAllByText('1 cuenta seleccionada')).toHaveLength(2)
+    expect(screen.getByText('Paso a ahorro')).toBeInTheDocument()
+
+    await user.click(screen.getByLabelText('Categorías'))
+    await user.click(screen.getByRole('option', { name: 'Otros · Ingreso' }))
+    await user.click(screen.getByRole('button', { name: 'Cerrar selector' }))
+    expect(screen.getByText('Reembolso recibido')).toBeInTheDocument()
+    expect(screen.queryByText('Gasto menor varios')).not.toBeInTheDocument()
+
+    // Restaurar Todas las cuentas y Desde vacío mientras sigue activo el filtro «Otros · Ingreso»:
+    // saldos, resúmenes, gastos por categoría, sugerencias y bandeja bancaria NO cambian por el filtro de categorías
+    await user.click(screen.getByRole('button', { name: 'Todas' }))
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '' } })
+    expect(totalBalanceCard.textContent).toBe(initialTotalBalanceText)
+    expect(incomeSummaryCard.textContent).toBe(initialIncomeText)
+    expect(expenseSummaryCard.textContent).toBe(initialExpenseText)
+    expect(categoryExpenseSection.textContent).toBe(initialCategoryExpenseText)
+    expect(suggestionsSection.textContent).toBe(initialSuggestionsText)
+    expect(inboxSection.textContent).toBe(initialInboxText)
   })
 })

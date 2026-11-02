@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { normalizeCategorySearch } from '../finance/calculations'
 import type { FinancialCategory } from '../types/finance'
 
 export interface CategoryPickerLeadingOption {
@@ -22,9 +23,7 @@ interface CategoryPickerProps {
   onChange: (id: string) => void
 }
 
-function normalizeSearch(value: string) {
-  return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim().replace(/[→>]/g, ' ').replace(/\s+/g, ' ')
-}
+const normalizeSearch = normalizeCategorySearch
 
 export function CategoryPicker({
   id,
