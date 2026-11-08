@@ -1,4 +1,4 @@
-import { parseBancolombiaNotification, type SharedParsedBankNotification } from './parser.ts'
+import { parseBancolombiaNotification, parsePseReceipt, type SharedParsedBankNotification } from './parser.ts'
 
 export interface ResendEmailAuthentication {
   spf?: string | null
@@ -52,6 +52,7 @@ const GMAIL_CONFIRMATION_SENDERS = new Set([
   'forwarding-noreply@google.com',
   'mail-noreply@google.com',
 ])
+const PSE_SENDER = 'serviciopse@achcolombia.com.co'
 
 const NAMED_ENTITIES: Record<string, string> = {
   amp: '&',
@@ -512,6 +513,13 @@ function verifyBancolombiaSenderAuth(
   return 'direct_dkim_dmarc'
 }
 
+function verifyPseSenderAuth(email: ReceivedEmailPayload): 'direct_dkim_dmarc' | null {
+  if (getSoleFromAddress(email) !== PSE_SENDER || !email.authentication) return null
+  const dmarc = email.authentication.dmarc?.toLowerCase()
+  // El booleano DKIM de Resend no indica qué firma pasó; DMARC verifica alineación con From.
+  return dmarc === 'pass' ? 'direct_dkim_dmarc' : null
+}
+
 /**
  * Limpia encabezados de reenvío añadidos por Gmail y pies legales estáticos del correo
  * bancario sin eliminar importes presentes dentro del texto del aviso.
@@ -569,14 +577,15 @@ export function classifyInboundEmail(email: ReceivedEmailPayload): InboundClassi
     }
   }
 
-  // 2. Comprobar remitente oficial de Bancolombia + autenticación de transporte
+  // 2. Comprobar el remitente original y su autenticación antes de analizar contenido.
   const fromAddress = getSoleFromAddress(email)
   const fromDomain = getEmailDomain(fromAddress)
-  if (!fromDomain || !isOfficialBancolombiaDomain(fromDomain)) {
+  const isPse = fromAddress === PSE_SENDER
+  if (!isPse && (!fromDomain || !isOfficialBancolombiaDomain(fromDomain))) {
     return { kind: 'ignored', reason: 'unverified_sender' }
   }
 
-  const authMechanism = verifyBancolombiaSenderAuth(email)
+  const authMechanism = isPse ? verifyPseSenderAuth(email) : verifyBancolombiaSenderAuth(email)
   if (!authMechanism) {
     return { kind: 'ignored', reason: 'failed_email_authentication' }
   }
@@ -584,12 +593,12 @@ export function classifyInboundEmail(email: ReceivedEmailPayload): InboundClassi
   // 3. Extraer texto seguro desde texto plano y/o HTML y aplicar el parser exacto de Bancolombia
   const candidates: string[] = []
   if (email.text && email.text.trim()) {
-    candidates.push(cleanForwardedBankBody(email.text, email.subject))
+    candidates.push(isPse ? email.text : cleanForwardedBankBody(email.text, email.subject))
   }
   if (email.html && email.html.trim()) {
     const safeHtmlText = htmlToSafePlainText(email.html)
     if (safeHtmlText) {
-      candidates.push(cleanForwardedBankBody(safeHtmlText, email.subject))
+      candidates.push(isPse ? safeHtmlText : cleanForwardedBankBody(safeHtmlText, email.subject))
     }
   }
 
@@ -598,18 +607,23 @@ export function classifyInboundEmail(email: ReceivedEmailPayload): InboundClassi
   }
 
   let sawAmountError = false
+  const successful: SharedParsedBankNotification[] = []
+  let sawUnrecognized = false
   for (const candidate of candidates) {
-    const parsed = parseBancolombiaNotification(candidate)
+    const parsed = isPse ? parsePseReceipt(candidate) : parseBancolombiaNotification(candidate)
     if (parsed.success) {
-      return {
-        kind: 'bank_notification',
-        parsed: parsed.data,
-        authMechanism,
-      }
+      successful.push(parsed.data)
+      continue
     }
+    sawUnrecognized = true
     if (/importe|centavos|separadores|varios importes/i.test(parsed.error)) {
       sawAmountError = true
     }
+  }
+
+  if (successful.length > 0 && !sawUnrecognized && successful.every((parsed) =>
+    JSON.stringify(parsed) === JSON.stringify(successful[0]))) {
+    return { kind: 'bank_notification', parsed: successful[0], authMechanism }
   }
 
   return {

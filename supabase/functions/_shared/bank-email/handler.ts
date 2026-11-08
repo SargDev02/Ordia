@@ -218,7 +218,7 @@ export function createBankEmailWebhookHandler(
 
     // classification.kind === 'bank_notification'
     const parsed = classification.parsed
-    const { data, error } = await admin.rpc('ingest_bank_inbound_notification', {
+    const { data, error } = await admin.rpc('ingest_movement_notice', {
       p_provider_event_hash: providerEventHash,
       p_alias_local_part: aliasLocalPart,
       p_message_id_hash: messageIdHash,
@@ -227,6 +227,7 @@ export function createBankEmailWebhookHandler(
       p_amount: parsed.amount,
       p_occurred_on: parsed.occurred_on,
       p_occurred_time: parsed.occurred_time,
+      p_provider_reference: parsed.provider_reference ?? null,
       p_merchant: parsed.merchant,
       p_account_last_digits: parsed.account_last_digits,
       p_card_last_digits: parsed.card_last_digits,

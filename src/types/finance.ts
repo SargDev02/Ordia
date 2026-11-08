@@ -176,7 +176,8 @@ export interface BankNotification {
   amount: number
   currency: 'COP'
   occurred_on: string
-  occurred_time: string
+  occurred_time: string | null
+  provider_reference?: string | null
   merchant: string | null
   account_last_digits: string | null
   card_last_digits: string | null
@@ -198,7 +199,8 @@ export interface CreateBankNotificationInput {
   notification_type: BankNotificationType
   amount: number
   occurred_on: string
-  occurred_time: string
+  occurred_time: string | null
+  provider_reference?: string | null
   merchant?: string | null
   account_last_digits?: string | null
   card_last_digits?: string | null
@@ -233,7 +235,8 @@ export interface ParsedBankNotification {
   notification_type: BankNotificationType
   amount: number
   occurred_on: string
-  occurred_time: string
+  occurred_time: string | null
+  provider_reference?: string | null
   merchant: string | null
   account_last_digits: string | null
   card_last_digits: string | null

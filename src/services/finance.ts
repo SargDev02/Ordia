@@ -227,7 +227,7 @@ export async function deleteTransaction(transactionId: string) {
 }
 
 export async function createBankNotification(requestId: string, input: CreateBankNotificationInput): Promise<BankNotification> {
-  const { data, error } = await client().rpc('create_bank_notification', {
+  const { data, error } = await client().rpc('create_movement_notice', {
     p_account_last_digits: input.account_last_digits ?? null,
     p_amount: input.amount,
     p_bank_name: input.bank_name ?? 'Bancolombia',
@@ -239,6 +239,7 @@ export async function createBankNotification(requestId: string, input: CreateBan
     p_notification_type: input.notification_type,
     p_occurred_on: input.occurred_on,
     p_occurred_time: input.occurred_time,
+    p_provider_reference: input.provider_reference ?? null,
     p_request_id: requestId,
     p_source_channel: input.source_channel ?? 'manual',
   })

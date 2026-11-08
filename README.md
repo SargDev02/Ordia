@@ -76,6 +76,7 @@ El modelo se construye con estas migraciones versionadas:
 - `supabase/migrations/20261027002318_harden_push_subscription_rpcs.sql`
 - `supabase/migrations/20261101133000_add_bank_notifications_inbox.sql`
 - `supabase/migrations/20261102053000_add_bank_email_forwarding_and_push_alerts.sql`
+- `supabase/migrations/20261108154406_add_qr_and_pse_receipts.sql`
 
 - `financial_accounts` conserva nombre, tipo, COP, saldo inicial y fecha de archivo.
 - `financial_transactions` representa un ingreso, gasto o transferencia completa. Una transferencia usa una sola fila con origen y destino; por ello se crea, edita o elimina atómicamente y no entra en los totales de ingresos o gastos.
@@ -173,12 +174,14 @@ Ordia incorpora un motor determinista de reglas para ayudar a comprender gastos 
    - Cuando no hay cuentas seleccionadas, muestra un estado vacío claro y comprensible solicitando seleccionar al menos una cuenta para generar el análisis.
    - El acceso es directo desde el resumen mediante el enlace de navegación «Ver sugerencias financieras ↓».
 
-### Bandeja «Movimientos por revisar» (avisos bancarios Bancolombia)
+### Bandeja «Movimientos por revisar» (Bancolombia y PSE)
 
-Ordia incorpora una bandeja privada de entrada para procesar notificaciones bancarias de Bancolombia —tanto pegadas manualmente como recibidas automáticamente por reenvío selectivo desde el Gmail personal de cada usuario— sin acceso OAuth a Gmail, sin lectura de la bandeja de correo, sin servicios de IA externos y sin alterar saldos hasta su confirmación explícita:
+Ordia incorpora una bandeja privada de entrada para procesar avisos de Bancolombia y comprobantes PSE/ACH Colombia —tanto pegados manualmente como recibidos automáticamente por reenvío selectivo desde Gmail— sin acceso OAuth a Gmail, sin lectura de la bandeja de correo, sin servicios de IA externos y sin alterar saldos hasta su confirmación explícita:
 
 1. **Reconocimiento determinista y extracción de datos**:
    - Reconoce compras con tarjeta de débito/crédito, transferencias recibidas y transferencias enviadas.
+   - Reconoce pagos salientes «pagaste … por código QR» de Bancolombia con o sin tilde. Extrae la cuenta de origen y no confunde el nombre anterior al verbo con el comercio ni la llave con una cuenta propia.
+   - Reconoce comprobantes PSE de ACH Colombia solo con estado inequívocamente **Aprobada**. Guarda fecha y CUS como texto con ceros iniciales; no inventa hora ni cuenta de origen. PSE es el proveedor del comprobante, no una cuenta de Ordia.
    - Extrae el importe exacto en pesos COP enteros, reconociendo formatos con comas o puntos de miles y centavos en cero (`$22,000` → 22.000, `$39.900,00` → 39.900, `$200,000.00` → 200.000). Si el aviso contiene centavos distintos de cero, separadores inválidos o importes ambiguos, explica el problema y no crea el pendiente; nunca redondea ni trunca silenciosamente.
    - Extrae fecha y hora en `America/Bogota` (admitiendo años de 4 o 2 dígitos, ej. `20/10/26` → `2026-10-20`). Valida fechas reales en el calendario.
    - Identifica comercio en compras (ej. `HOMECENTER RIONEGRO`), número de cuenta (ej. `**8422`) y tarjeta (ej. `T.Deb *0541`).
@@ -208,6 +211,7 @@ Ordia incorpora una bandeja privada de entrada para procesar notificaciones banc
    - `authenticated` solo posee privilegio `SELECT` sobre `bank_notifications`, `bank_card_account_links`, `bank_email_aliases` y `bank_push_notification_attempts` (con políticas RLS exclusivamente `FOR SELECT`); todas las escrituras se ejecutan mediante funciones en `private.*` expuestas por envoltorios `SECURITY INVOKER` en `public.*`, de modo que ni siquiera activando manualmente `ordia.bank_notification_flow` un cliente puede escribir directamente en las tablas. Además, el trigger `validate_bank_notification` prohíbe sobrescribir avisos ya resueltos o descartados, y si falla la creación del movimiento el aviso permanece en `pending`.
    - Si la migración aún no está instalada, la interfaz distingue explícitamente «Bandeja no disponible» de «Sin pendientes» y nunca muestra éxito cuando nada fue guardado.
    - Avisos coincidentes: si dos avisos presentan los mismos datos pero carecen de identificador bancario único, o coinciden en fecha e importe con un aviso ya pegado manualmente (pendiente o resuelto) o un movimiento ya registrado, Ordia señala la **`Posible coincidencia`** en la interfaz mediante un distintivo de advertencia sin descartar automáticamente operaciones legítimas.
+   - El CUS evita otro pendiente PSE del mismo usuario y proveedor. Un aviso bancario y un comprobante PSE pueden vincularse manualmente al mismo gasto mediante «Ya lo registré»; igual importe y fecha solo sugieren una posible coincidencia.
 
 5. **Privacidad, teclado numérico móvil y buscador unificado de categorías**:
    - La lista móvil prioriza importe, tipo y fecha/hora, reservando los detalles para el diálogo de revisión.
@@ -221,14 +225,15 @@ Ordia incorpora una bandeja privada de entrada para procesar notificaciones banc
      - Presenta estados claros (**Sin configurar**, **Pendiente de confirmación en Gmail**, **Activo** y **Desactivado**) y distingue **«dirección confirmada en Gmail»** (`gmail_confirmed_at`) de **«primer aviso bancario recibido»** (`last_notification_at`).
      - El usuario autenticado genera un alias privado, exclusivo y no predecible (`bnc_<32-hex>@<dominio>`), puede copiarlo, desactivarlo y reemplazarlo. Al desactivar o reemplazar el alias, la dirección anterior queda inactiva de inmediato (`is_active = false`) y deja de aceptar avisos.
      - El propietario se resuelve exclusivamente en el servidor a partir del destinatario verificado de entrega (`received_for` / `Delivered-To` / `to` bajo `@<dominio>`), **nunca** por `From`, correo de acceso a Ordia, comercio ni dígitos de cuenta o tarjeta.
-     - Guía paso a paso para añadir la dirección de reenvío en Gmail y crear un filtro exclusivo para avisos de Bancolombia (instruyendo expresamente **no** activar el reenvío global de todo el correo).
+     - Guía paso a paso para añadir la dirección de reenvío en Gmail y crear un filtro exclusivo para los remitentes observados `alertasynotificaciones@an.bancolombia.com.co`, `alertasynotificaciones@ayn.bancolombia.com.co` y `serviciopse@achcolombia.com.co`. El filtro conserva además los dos remitentes de Bancolombia admitidos antes. **No** se activa el reenvío global de todo el correo.
      - **Confirmación de Gmail**: cuando llega el mensaje de `forwarding-noreply@google.com` o `mail-noreply@google.com` autenticado por Google (`DKIM`/`DMARC`/`SPF=pass` para `google.com`), el servidor extrae únicamente el código numérico y/o el enlace HTTPS oficial de Google (`mail.google.com` / `isolated.mail.google.com`) para que el propietario autenticado complete la verificación desde Ordia, sin interpretarlo como movimiento bancario, **sin abrir enlaces automáticamente**, **sin renderizar HTML recibido** y sin exponer códigos o enlaces a otros usuarios.
    - **Qué verifica `bank-email-webhook` y limitaciones tras un reenvío de Gmail**:
      - Rechaza con `401` cualquier solicitud sin firma Svix HMAC-SHA256 válida o fuera de la ventana temporal de 300 segundos.
-     - Exige destinatario verificado activo y autenticación de transporte en `Authentication-Results` / `ARC-Authentication-Results`: `DKIM=pass` o `DMARC=pass` para dominios oficiales de Bancolombia (`bancolombia.com.co`, `notificacionesbancolombia.com`, `bancolombia.com`), **o bien** reenvío automático de Gmail (`X-Forwarded-To` / `X-Forwarded-For`) con `SPF=pass` de Google y `ARC-Authentication-Results` en `pass` emitido por `mx.google.com` para el dominio de Bancolombia.
-     - **Límite técnico del reenvío**: al reenviar desde Gmail, el `SPF` directo del último salto pasa a corresponder a la infraestructura de Google; por ello la autenticidad original del banco tras el salto depende de `DKIM` conservado o del sello `ARC` de `mx.google.com`. Un correo reenviado manualmente por un usuario («Reenviar» redactado desde `@gmail.com`) carece de `DKIM`/`ARC` original del banco y de cabeceras de auto-reenvío de Gmail, por lo que se ignora deliberadamente junto con cualquier mensaje dudoso o ajeno.
+     - Para PSE exige el `From` exacto `serviciopse@achcolombia.com.co` y `DMARC=pass` comprobado por Resend, alineado con ACH Colombia. Un `DKIM=pass` aislado no basta porque no identifica cuál firma pasó. Sin esa evidencia, no crea pendiente automático.
+     - Exige destinatario verificado activo, remitente original de un dominio oficial de Bancolombia (`bancolombia.com.co`, `notificacionesbancolombia.com`, `bancolombia.com`) y `DKIM=pass` o `DMARC=pass` certificado por Resend. Las cabeceras de autenticación escritas dentro del mensaje no bastan.
+     - **Límite técnico del reenvío**: al reenviar desde Gmail, el `SPF` directo del último salto puede corresponder a Google. Si Resend no puede comprobar `DKIM` o `DMARC` del remitente original, el aviso se ignora. Un reenvío manual redactado desde `@gmail.com` cambia el `From` y también se ignora.
      - Convierte HTML a texto plano en memoria sin DOM ni ejecución, recorta cabeceras de reenvío y pies legales sin alterar tokens `$` del importe y reutiliza `parseBancolombiaNotification`.
-     - Deduplica reintentos del proveedor en `private.bank_inbound_email_deliveries` mediante `provider_event_hash` y `(user_id, message_id_hash)` para no duplicar pendientes ni envíos push, pero **no** descarta dos operaciones reales distintas del mismo minuto, comercio e importe.
+     - Deduplica reintentos del proveedor en `private.bank_inbound_email_deliveries` mediante `provider_event_hash` y `(user_id, message_id_hash)`; PSE también deduplica por usuario, proveedor y CUS. No descarta dos operaciones reales distintas del mismo minuto, comercio e importe.
 
 7. **Notificación Web Push inmediata e independiente al celular**:
    - Reutiliza `push_subscriptions` y el service worker añadiendo la preferencia independiente **«Avisarme de movimientos bancarios»** (`notify_bank_movements`), desacoplada de los recordatorios horarios de gastos fijos (`notify_fixed_expenses`). Desactivar avisos bancarios no desactiva los recordatorios de gastos fijos ni viceversa.
@@ -241,7 +246,24 @@ Ordia incorpora una bandeja privada de entrada para procesar notificaciones banc
      1. En [Resend Dashboard → Emails → Receiving](https://resend.com/emails), habilita la recepción en el subdominio gratuito `<id>.resend.app` (o configura el registro `MX` de un subdominio propio) y crea un **Webhook** para el evento `email.received` hacia `https://dedtyhomynsmvatfnshs.supabase.co/functions/v1/bank-email-webhook`.
      2. Carga en los secretos de Edge Functions de Ordia (`dedtyhomynsmvatfnshs`) `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` (el secreto `whsec_...` del webhook) y `BANK_INBOUND_EMAIL_DOMAIN=<id>.resend.app` (conservando los secretos `VAPID_*` existentes), y añade `VITE_BANK_INBOUND_EMAIL_DOMAIN=<id>.resend.app` en `.env.local` y en Vercel (Production/Preview).
      3. Verifica `pnpm exec supabase db push --dry-run` sobre `dedtyhomynsmvatfnshs`, aplica `20261102053000_add_bank_email_forwarding_and_push_alerts.sql` y despliega `bank-email-webhook` y `send-push-reminders` con `--use-api --no-verify-jwt`, seguido del despliegue del frontend.
-     4. En Ordia, abre **Finanzas → Movimientos por revisar → Conectar mi correo**, genera y copia tu dirección privada, agrégala en Gmail (**Configuración → Ver todos los ajustes → Reenvío y correo POP/IMAP → Añadir una dirección de reenvío**), completa la confirmación con el código o enlace recibido en Ordia, **mantén seleccionado «Inhabilitar el reenvío» global** y crea en **Filtros y direcciones bloqueadas** un filtro exclusivo para los avisos de Bancolombia que reenvíe solo esos mensajes a tu dirección privada. Activa además **Avisarme de movimientos bancarios** en tu celular instalado como PWA.
+     4. En Ordia, abre **Finanzas → Movimientos por revisar → Conectar mi correo**, genera y copia tu dirección privada, agrégala en Gmail (**Configuración → Ver todos los ajustes → Reenvío y correo POP/IMAP → Añadir una dirección de reenvío**), completa la confirmación con el código o enlace recibido en Ordia, **mantén seleccionado «Inhabilitar el reenvío» global** y crea en **Filtros y direcciones bloqueadas** el filtro exclusivo para los dos remitentes de Bancolombia (`an` y `ayn`) y el remitente exacto de PSE. Activa además **Avisarme de movimientos bancarios** en tu celular instalado como PWA.
+
+### Publicación de QR y PSE — 8 de noviembre de 2026
+
+Se corrigió el conteo del reporte local anterior: había **15 migraciones previas** y esta entrega agrega la **número 16**. El mensaje «15 migraciones aplicadas» de aquella prueba era un texto fijo incorrecto; no identificaba una migración omitida. Aquella ejecución con `psql` no mantenía una tabla de historial. Para publicar se reconstruyó otra instancia PostgreSQL 17 desechable, con un esquema mínimo de Auth para las pruebas, registrando versión, nombre y SHA-256 de cada archivo aplicado. La carpeta temporal anterior se conservó intacta.
+
+Se compararon una por una estas versiones entre repositorio, registro de la reconstrucción local y producción. Antes de publicar, producción tenía las primeras 15; después coincide con las 16:
+
+```text
+20261026173736  20261026220000  20261026230000  20261026234754
+20261027001830  20261027002318  20261027172426  20261027174659
+20261027181431  20261028005021  20261028011247  20261028020000
+20261028130644  20261101133000  20261102053000  20261108154406
+```
+
+El dry-run remoto sobre **Ordia (`dedtyhomynsmvatfnshs`)** propuso exclusivamente `20261108154406_add_qr_and_pse_receipts.sql`, sin seeds ni roles. Se aplicó una vez con Vault excluido. Las huellas agregadas de los avisos, asociaciones de cuentas, movimientos y Cron coincidieron antes y después; no se insertaron fixtures en producción. Solo se desplegó `bank-email-webhook` (v2, ACTIVE), comprobando coincidencia de sus cinco archivos con los locales y respuesta 401 ante una solicitud sin firma. `send-push-reminders`, iCloud y Google Calendar conservaron sus versiones y contenido.
+
+Pasaron `pnpm typecheck`, `pnpm lint`, **283 pruebas en 32 archivos**, `pnpm build`, `git diff --check` y los tres chequeos SQL locales: `bank_notifications_isolation.sql`, `bank_email_and_push_isolation.sql` y `qr_pse_receipts.sql`. La disponibilidad de código y esquema en producción se distingue de la recepción de un correo real reenviado por Gmail y de un push en el iPhone, que siguen pendientes de comprobación.
 
 ## Tareas y checklist personal
 

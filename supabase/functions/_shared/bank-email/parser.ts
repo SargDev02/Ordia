@@ -5,7 +5,8 @@ export interface SharedParsedBankNotification {
   notification_type: SharedBankNotificationType
   amount: number
   occurred_on: string
-  occurred_time: string
+  occurred_time: string | null
+  provider_reference?: string | null
   merchant: string | null
   account_last_digits: string | null
   card_last_digits: string | null
@@ -171,7 +172,7 @@ function extractSingleAmountToken(text: string): { ok: true; token: string } | {
  * cuenta o tarjeta) sin inventar información no suministrada ni redondear centavos.
  */
 export function parseBancolombiaNotification(rawText: string): SharedParseNotificationResult {
-  const text = rawText.trim()
+  const text = rawText.replace(/\s+/g, ' ').trim()
   if (!text) {
     return {
       success: false,
@@ -187,6 +188,15 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
       error: 'No se reconoció un aviso de Bancolombia. Asegúrate de incluir el texto de la notificación bancaria.',
     }
   }
+  if (/\b(?:rechazad[ao]|fallid[ao]|no\s+(?:fue\s+)?(?:exitos[ao]|aprobado|realizado)|no\s+se\s+pudo\s+(?:procesar|realizar|completar)|(?:transacci[oó]n|pago)\s+pendiente)\b/i.test(text)) {
+    return { success: false, error: 'El aviso no confirma un pago exitoso.' }
+  }
+
+  const qrPayment = /\bpagaste\s+\$\s*([^\s]+)\s+por\s+c[oó]digo\s+QR\b/i.exec(text)
+  const mentionsQrPayment = /\bpagaste\b/i.test(text) || /\bpor\s+c[oó]digo\s+QR\b/i.test(text)
+  if (mentionsQrPayment && !qrPayment) {
+    return { success: false, error: 'No se reconoció un pago por código QR completo.' }
+  }
 
   // 1. Detectar tipo de operación
   let notificationType: SharedBankNotificationType | null = null
@@ -196,7 +206,7 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
     /abono\s+de\s+transferencia/i.test(text)
   ) {
     notificationType = 'transfer_received'
-  } else if (/compraste\s+/i.test(text) || /compra\s+por\s+/i.test(text) || /pago\s+en\s+/i.test(text)) {
+  } else if (qrPayment || /compraste\s+/i.test(text) || /compra\s+por\s+/i.test(text) || /pago\s+en\s+/i.test(text)) {
     notificationType = 'purchase'
   } else if (/transferiste\s+/i.test(text) || /enviaste\s+una\s+transferencia/i.test(text)) {
     notificationType = 'transfer_sent'
@@ -216,6 +226,9 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
       success: false,
       error: tokenResult.error,
     }
+  }
+  if (qrPayment && tokenResult.token !== qrPayment[1]) {
+    return { success: false, error: 'El importe del pago por QR es ambiguo.' }
   }
 
   const amountOutcome = parseCopAmountDetailed(tokenResult.token)
@@ -267,7 +280,7 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
 
   // 4. Extraer comercio (solo para compras)
   let merchant: string | null = null
-  if (notificationType === 'purchase') {
+  if (notificationType === 'purchase' && !qrPayment) {
     const merchantMatch = text.match(
       /(?:en|a)\s+([A-Za-z0-9\s.,'&/_-]+?)(?=\s+con\s+tu|\s+el\s+\d|\s*,\s*el|\s*$)/i,
     )
@@ -305,9 +318,9 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
 
   // 7. Extraer contrapartes (remitente o cuenta destino ajena)
   let counterparty_name: string | null = null
-  const senderMatch =
+  const senderMatch = !qrPayment && (
     text.match(/\bde\s+"([^"]*)"/i) ||
-    text.match(/\bde\s+([A-Za-z0-9\s.]+?)(?=\s+en\s+tu|\s+el|\s*$|\s*,)/i)
+    text.match(/\bde\s+([A-Za-z0-9\s.]+?)(?=\s+en\s+tu|\s+el|\s*$|\s*,)/i))
   if (senderMatch && senderMatch[1]) {
     const cleanSender = senderMatch[1].trim()
     if (cleanSender.length > 0) {
@@ -341,4 +354,44 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
       counterparty_account_last_digits,
     },
   }
+}
+
+/** Comprobante PSE: únicamente campos explícitos de una transacción aprobada. */
+export function parsePseReceipt(rawText: string): SharedParseNotificationResult {
+  const text = rawText.replace(/\r\n/g, '\n').trim()
+  const lines = text.split('\n').map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  const values = (label: RegExp) => lines.flatMap((line) => {
+    const match = label.exec(line)
+    return match ? [match[1].trim()] : []
+  })
+  const statuses = values(/^Estado\s+de\s+la\s+Transacci[oó]n\s*:\s*(.+)$/i)
+  if (statuses.length !== 1 || !/^aprobada?$/i.test(statuses[0]) || /\b(?:rechazad[ao]|fallid[ao]|pendiente|declinad[ao])\b/i.test(text)) {
+    return { success: false, error: 'El comprobante PSE no tiene un estado inequívocamente aprobado.' }
+  }
+  const amounts = values(/^Valor\s*:\s*(.+)$/i)
+  if (amounts.length !== 1 || (text.match(/\$/g) ?? []).length !== 1 || !/^\$\s*[^\s]+$/.test(amounts[0])) {
+    return { success: false, error: 'El importe del comprobante PSE falta o es ambiguo.' }
+  }
+  const amount = parseCopAmountDetailed(amounts[0])
+  if (!amount.ok) return { success: false, error: amount.error }
+  const dates = values(/^Fecha\s+de\s+la\s+transacci[oó]n\s*:\s*(.+)$/i)
+  const date = dates.length === 1 && /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dates[0])
+  if (!date || !isValidDate(Number(date[3]), Number(date[2]), Number(date[1]))) {
+    return { success: false, error: 'La fecha del comprobante PSE falta o no es válida.' }
+  }
+  const references = values(/^CUS\s*:\s*(.+)$/i)
+  if (references.length !== 1 || !/^\d{1,40}$/.test(references[0])) {
+    return { success: false, error: 'El CUS del comprobante PSE falta o es ambiguo.' }
+  }
+  const companies = values(/^Empresa\s*:\s*(.+)$/i)
+  if (companies.length !== 1 || !companies[0]) {
+    return { success: false, error: 'La empresa del comprobante PSE falta o es ambigua.' }
+  }
+  return { success: true, data: {
+    bank_name: 'PSE/ACH Colombia', notification_type: 'purchase', amount: amount.amount,
+    occurred_on: `${date[3]}-${date[2]}-${date[1]}`, occurred_time: null,
+    provider_reference: references[0], merchant: companies[0], account_last_digits: null,
+    card_last_digits: null, card_type: null, counterparty_name: null,
+    counterparty_account_last_digits: null,
+  } }
 }

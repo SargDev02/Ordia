@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   isTransactionCompatibleWithNotification,
   parseBancolombiaNotification,
+  parseMovementNotice,
   parseCopAmount,
   resolveKnownAccountId,
 } from './bankNotificationParser'
+import { parsePseReceipt } from '../../supabase/functions/_shared/bank-email/parser'
 import type { BankCardAccountLink, BankNotification, FinancialAccount, FinancialTransaction } from '../types/finance'
 
 describe('parseCopAmount', () => {
@@ -104,6 +106,61 @@ describe('parseBancolombiaNotification con los tres ejemplos de referencia', () 
     expect(result.data.counterparty_account_last_digits).toBeNull() // *"" tratado como desconocido
     expect(result.data.card_last_digits).toBeNull()
     expect(result.data.merchant).toBeNull()
+  })
+})
+
+const QR_NOTICE = 'Bancolombia: PERSONA DE PRUEBA pagaste $64,000.00 por codigo QR desde tu cuenta *1234 a la llave 0000123456 el 08/11/2026 a las 10:03. Con codigo QR es facil y de una.'
+const PSE_RECEIPT = `Estado de la Transacción: Aprobada
+Valor: $ 27.500,00
+Empresa: EMPRESA DE PRUEBA S.A.S.
+Descripción: COMPRA DE PRUEBA
+Fecha de la transacción: 07/11/2026
+CUS: 000123456`
+
+describe('nuevos formatos de movimientos por revisar', () => {
+  it('interpreta el pago QR como gasto saliente sin atribuir nombre ni llave a una cuenta', () => {
+    for (const notice of [QR_NOTICE, QR_NOTICE.replace('codigo QR', 'código QR'), `<p>Bancolombia: PERSONA DE PRUEBA <strong>pagaste</strong> $64,000.00 por código QR desde tu cuenta *1234 a la llave 0000123456 el 08/11/2026 a las 10:03.</p><p>Línea de atención: 3001234567</p>`]) {
+      const result = parseMovementNotice(notice)
+      expect(result.success).toBe(true)
+      if (!result.success) continue
+      expect(result.data).toMatchObject({ bank_name: 'Bancolombia', notification_type: 'purchase', amount: 64000, occurred_on: '2026-11-08', occurred_time: '10:03', account_last_digits: '1234', merchant: null, card_last_digits: null, counterparty_account_last_digits: null })
+      expect(JSON.stringify(result.data)).not.toContain('0000123456')
+      expect(JSON.stringify(result.data)).not.toContain('PERSONA DE PRUEBA')
+    }
+  })
+
+  it('rechaza QR incompleto, fallido, con importe inválido o ambiguo', () => {
+    for (const notice of [
+      QR_NOTICE.replace('por codigo QR', 'en la tienda'),
+      QR_NOTICE.replace('pagaste $64,000.00 por codigo QR', 'pagaste en un comercio'),
+      QR_NOTICE.replace('$64,000.00', '$64,000.50'),
+      QR_NOTICE.replace('$64,000.00', '$64 000'),
+      QR_NOTICE.replace('Con codigo QR', 'Rechazado. Con codigo QR'),
+      `${QR_NOTICE} El pago no se pudo procesar.`,
+      `${QR_NOTICE} Saldo: $10.000`,
+    ]) expect(parseMovementNotice(notice).success).toBe(false)
+  })
+
+  it('lee PSE en texto y HTML, conservando el CUS y sin inventar hora ni cuenta', () => {
+    const html = `<table>${PSE_RECEIPT.split('\n').map((line) => `<tr><td>${line.split(': ')[0]}:</td><td>${line.split(': ')[1]}</td></tr>`).join('')}</table>`
+    for (const notice of [PSE_RECEIPT, html]) {
+      const result = parseMovementNotice(notice)
+      expect(result.success).toBe(true)
+      if (!result.success) continue
+      expect(result.data).toMatchObject({ bank_name: 'PSE/ACH Colombia', notification_type: 'purchase', amount: 27500, occurred_on: '2026-11-07', occurred_time: null, provider_reference: '000123456', account_last_digits: null, card_last_digits: null, merchant: 'EMPRESA DE PRUEBA S.A.S.' })
+    }
+  })
+
+  it('solo acepta estado aprobado inequívoco e importe entero válido de PSE', () => {
+    for (const notice of [
+      PSE_RECEIPT.replace('Aprobada', 'Rechazada'),
+      PSE_RECEIPT.replace('Aprobada', 'Pendiente'),
+      `${PSE_RECEIPT}\nEstado de la Transacción: Rechazada`,
+      `${PSE_RECEIPT}\nResultado: Fallida`,
+      PSE_RECEIPT.replace('27.500,00', '27.500,50'),
+      PSE_RECEIPT.replace('27.500,00', '27.50,00'),
+      PSE_RECEIPT.replace('CUS: 000123456', 'CUS: '),
+    ]) expect(parsePseReceipt(notice).success).toBe(false)
   })
 })
 

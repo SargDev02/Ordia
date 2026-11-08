@@ -70,6 +70,50 @@ const mockCardAccountLinks: BankCardAccountLink[] = [
 ]
 
 describe('BankNotificationsInbox', () => {
+  it('pega PSE aprobado, muestra CUS sin hora y propone gasto sin registrarlo', async () => {
+    const onConfirmTransaction = vi.fn()
+    const onCreateNotification = vi.fn().mockImplementation(async (parsed) => ({
+      ...parsed, id: 'pse-1', user_id: 'user-1', client_request_id: 'req-pse',
+      source_channel: 'manual', currency: 'COP', status: 'pending',
+      resolved_transaction_id: null, resolution_request_id: null,
+      dismissed_at: null, resolved_at: null, created_at: '', updated_at: '',
+    }))
+    render(<BankNotificationsInbox notifications={[]} cardAccountLinks={mockCardAccountLinks} accounts={mockAccounts} categories={mockCategories} transactions={[]} onCreateNotification={onCreateNotification} onConfirmTransaction={onConfirmTransaction} onConfirmTransfer={vi.fn()} onLinkTransaction={vi.fn()} onDismissNotification={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Texto de la notificación bancaria'), { target: { value: 'Estado de la Transacción: Aprobada\nValor: $ 27.500,00\nEmpresa: EMPRESA DE PRUEBA S.A.S.\nDescripción: COMPRA DE PRUEBA\nFecha de la transacción: 07/11/2026\nCUS: 000123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar aviso' }))
+    await waitFor(() => expect(onCreateNotification).toHaveBeenCalledWith(expect.objectContaining({ amount: 27500, occurred_on: '2026-11-07', occurred_time: null, provider_reference: '000123456' })))
+    expect(screen.getByRole('dialog').textContent).toContain('CUS: 000123456')
+    expect(screen.getByLabelText('Cuenta en Ordia')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Registrar gasto' })).toBeInTheDocument()
+    expect(onConfirmTransaction).not.toHaveBeenCalled()
+  })
+
+  it('ofrece vincular PSE al gasto ya asociado a un aviso bancario, solo tras elegirlo', async () => {
+    const base: BankNotification = {
+      id: 'pse-1', user_id: 'user-1', client_request_id: 'req-pse', bank_name: 'PSE/ACH Colombia',
+      source_channel: 'gmail', notification_type: 'purchase', amount: 27500, currency: 'COP',
+      occurred_on: '2026-11-07', occurred_time: null, provider_reference: '000123456',
+      merchant: 'EMPRESA DE PRUEBA S.A.S.', account_last_digits: null, card_last_digits: null,
+      card_type: null, counterparty_name: null, counterparty_account_last_digits: null,
+      status: 'pending', resolved_transaction_id: null, resolution_request_id: null,
+      dismissed_at: null, resolved_at: null, created_at: '', updated_at: '',
+    }
+    const tx: FinancialTransaction = {
+      id: 'tx-1', user_id: 'user-1', kind: 'expense', account_id: 'acc-1',
+      destination_account_id: null, amount: 27500, occurred_on: '2026-11-07',
+      category_id: 'cat-hogar', description: 'Pago registrado', client_request_id: 'req-tx',
+      deleted_at: null, created_at: '', updated_at: '',
+    }
+    const onLinkTransaction = vi.fn().mockResolvedValue(undefined)
+    render(<BankNotificationsInbox notifications={[base, { ...base, id: 'bank-1', bank_name: 'Bancolombia', occurred_time: '10:03', provider_reference: null, status: 'resolved', resolved_transaction_id: tx.id, resolved_at: '2026-11-07T15:03:00Z' }]} cardAccountLinks={[]} accounts={mockAccounts} categories={mockCategories} transactions={[tx]} onCreateNotification={vi.fn()} onConfirmTransaction={vi.fn()} onConfirmTransfer={vi.fn()} onLinkTransaction={onLinkTransaction} onDismissNotification={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ya lo registré' }))
+    expect(screen.getByText('Pago registrado')).toBeInTheDocument()
+    expect(onLinkTransaction).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('radio'))
+    fireEvent.click(screen.getByRole('button', { name: 'Vincular a este movimiento' }))
+    await waitFor(() => expect(onLinkTransaction).toHaveBeenCalledWith('pse-1', 'tx-1'))
+  })
   it('renderiza estado inicial sin avisos pendientes', () => {
     render(
       <BankNotificationsInbox
@@ -89,7 +133,7 @@ describe('BankNotificationsInbox', () => {
     expect(screen.getByText('Movimientos por revisar')).toBeInTheDocument()
     expect(screen.getByText('Sin pendientes')).toBeInTheDocument()
     expect(
-      screen.getByText(/No tienes avisos bancarios pendientes por revisar/i),
+      screen.getByText(/No tienes movimientos pendientes por revisar/i),
     ).toBeInTheDocument()
   })
 

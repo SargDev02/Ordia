@@ -7,10 +7,12 @@ import type {
 } from '../types/finance'
 import {
   parseBancolombiaNotification as parseSharedBancolombiaNotification,
+  parsePseReceipt,
   parseCopAmount,
   parseCopAmountDetailed,
   type CopAmountParseOutcome,
 } from '../../supabase/functions/_shared/bank-email/parser'
+import { htmlToSafePlainText } from '../../supabase/functions/_shared/bank-email/mime-and-auth'
 
 export { parseCopAmount, parseCopAmountDetailed, type CopAmountParseOutcome }
 
@@ -22,6 +24,13 @@ export { parseCopAmount, parseCopAmountDetailed, type CopAmountParseOutcome }
  */
 export function parseBancolombiaNotification(rawText: string): ParseNotificationResult {
   return parseSharedBancolombiaNotification(rawText)
+}
+
+export function parseMovementNotice(rawText: string): ParseNotificationResult {
+  const plainText = /<\/?[a-z][^>]*>/i.test(rawText) ? htmlToSafePlainText(rawText) : rawText
+  return /Estado\s+de\s+la\s+Transacci[oó]n\s*:/i.test(plainText)
+    ? parsePseReceipt(plainText)
+    : parseSharedBancolombiaNotification(plainText)
 }
 
 /**

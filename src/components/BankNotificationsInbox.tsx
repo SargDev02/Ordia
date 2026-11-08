@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { formatCop, getCategoryLabel } from '../finance/calculations'
 import {
   isTransactionCompatibleWithNotification,
-  parseBancolombiaNotification,
+  parseMovementNotice,
   resolveKnownAccountId,
 } from '../finance/bankNotificationParser'
 import { TRANSACTION_KIND_LABELS } from '../finance/constants'
@@ -35,7 +35,8 @@ interface BankNotificationsInboxProps {
     notification_type: 'transfer_received' | 'purchase' | 'transfer_sent'
     amount: number
     occurred_on: string
-    occurred_time: string
+    occurred_time: string | null
+    provider_reference?: string | null
     merchant?: string | null
     account_last_digits?: string | null
     card_last_digits?: string | null
@@ -118,16 +119,9 @@ export function BankNotificationsInbox({
     [notifications],
   )
 
-  const alreadyLinkedTransactionIds = useMemo(
-    () =>
-      new Set(
-        notifications.flatMap((n) => (n.resolved_transaction_id ? [n.resolved_transaction_id] : [])),
-      ),
-    [notifications],
-  )
-
   // Encontrar cuenta sugerida para formularios de creación (enlace explícito primero; coincidencia de nombre como ayuda visual)
   function findDefaultAccount(notification: BankNotification): string {
+    if (notification.bank_name === 'PSE/ACH Colombia') return ''
     const known = resolveKnownAccountId(notification, cardAccountLinks, accounts)
     if (known && activeAccounts.some((a) => a.id === known)) {
       return known
@@ -193,7 +187,7 @@ export function BankNotificationsInbox({
       return
     }
 
-    const result = parseBancolombiaNotification(pasteText)
+    const result = parseMovementNotice(pasteText)
     if (!result.success) {
       setPasteError(result.error)
       return
@@ -204,6 +198,9 @@ export function BankNotificationsInbox({
       const created = await onCreateNotification(result.data)
       if (!created || typeof created.id !== 'string' || !created.id) {
         throw new Error('No recibimos confirmación del servidor. No se guardó ningún pendiente.')
+      }
+      if (created.status !== 'pending') {
+        throw new Error('Este comprobante ya fue revisado. No se creó otro pendiente.')
       }
       setPasteText('')
       handleOpenReview(created)
@@ -309,7 +306,6 @@ export function BankNotificationsInbox({
     if (!activeNotification) return []
     return transactions
       .filter((tx) => {
-        if (alreadyLinkedTransactionIds.has(tx.id)) return false
         return isTransactionCompatibleWithNotification(tx, activeNotification, knownAccountIdForActive)
       })
       .sort((a, b) => {
@@ -318,7 +314,7 @@ export function BankNotificationsInbox({
         if (aSameDay !== bSameDay) return aSameDay - bSameDay
         return b.occurred_on.localeCompare(a.occurred_on)
       })
-  }, [activeNotification, alreadyLinkedTransactionIds, knownAccountIdForActive, transactions])
+  }, [activeNotification, knownAccountIdForActive, transactions])
 
   async function handleLinkExisting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -406,7 +402,7 @@ export function BankNotificationsInbox({
             </span>
           </div>
           <p className="mt-1.5 text-sm text-[#66796f]">
-            Pega una notificación o SMS de Bancolombia para revisarla y convertirla en movimiento real. No cambia saldos hasta que lo confirmes.
+            Pega un aviso de Bancolombia o comprobante PSE para revisarlo. No cambia saldos hasta que confirmes un movimiento.
           </p>
         </div>
       </div>
@@ -438,7 +434,7 @@ export function BankNotificationsInbox({
               htmlFor="bancolombia-paste-input"
               className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#557064]"
             >
-              Pegar texto de aviso Bancolombia
+              Pegar aviso Bancolombia o comprobante PSE
             </label>
             <textarea
               id="bancolombia-paste-input"
@@ -479,7 +475,7 @@ export function BankNotificationsInbox({
           <div className="mt-6">
             {pendingNotifications.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-[#dce6d9] p-6 text-center text-sm text-[#718279]">
-                No tienes avisos bancarios pendientes por revisar. Pega uno arriba para comenzar.
+                No tienes movimientos pendientes por revisar. Pega un aviso o comprobante arriba para comenzar.
               </div>
             ) : (
               <div className="space-y-3">
@@ -498,7 +494,6 @@ export function BankNotificationsInbox({
                   )
                   const hasMatchingUnlinkedTransaction = transactions.some(
                     (tx) =>
-                      !alreadyLinkedTransactionIds.has(tx.id) &&
                       tx.occurred_on === notification.occurred_on &&
                       isTransactionCompatibleWithNotification(tx, notification, knownAccountForItem),
                   )
@@ -508,7 +503,7 @@ export function BankNotificationsInbox({
                   const isPurchase = notification.notification_type === 'purchase'
                   const isTransferReceived = notification.notification_type === 'transfer_received'
                   const typeLabel = isPurchase
-                    ? 'Compra con tarjeta'
+                    ? notification.bank_name === 'PSE/ACH Colombia' ? 'Pago PSE' : 'Compra o pago'
                     : isTransferReceived
                       ? 'Transferencia recibida'
                       : 'Transferencia enviada'
@@ -532,8 +527,9 @@ export function BankNotificationsInbox({
                             </span>
                           )}
                           <span className="text-xs text-[#718279]">
-                            {notification.occurred_on} a las {notification.occurred_time}
+                            {notification.occurred_on}{notification.occurred_time ? ` a las ${notification.occurred_time}` : ''}
                           </span>
+                          {notification.provider_reference && <span className="text-xs text-[#718279]">CUS {notification.provider_reference}</span>}
                           {isPossibleDuplicate && (
                             <span
                               className="rounded-md bg-[#fff3cd] px-2 py-0.5 text-xs font-medium text-[#856404]"
@@ -618,7 +614,7 @@ export function BankNotificationsInbox({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#4f8068]">
-                  Revisar aviso bancario
+                  Revisar movimiento
                 </p>
                 <h3 id="review-dialog-title" className="mt-1 text-2xl font-semibold text-[#173f31]">
                   {formatCop(activeNotification.amount)}
@@ -637,8 +633,9 @@ export function BankNotificationsInbox({
             {/* Resumen de datos extraídos */}
             <div className="mt-4 space-y-1 rounded-xl bg-[#f4f7f1] p-3.5 text-xs text-[#52675d]">
               <p>
-                <span className="font-semibold">Fecha:</span> {activeNotification.occurred_on} a las {activeNotification.occurred_time} (America/Bogota)
+                <span className="font-semibold">Fecha:</span> {activeNotification.occurred_on}{activeNotification.occurred_time ? ` a las ${activeNotification.occurred_time} (America/Bogota)` : ''}
               </p>
+              {activeNotification.provider_reference && <p><span className="font-semibold">CUS:</span> {activeNotification.provider_reference}</p>}
               {activeNotification.merchant && (
                 <p>
                   <span className="font-semibold">Comercio:</span> {activeNotification.merchant}
@@ -654,7 +651,7 @@ export function BankNotificationsInbox({
                   <span className="font-semibold">Cuenta:</span> Terminada en {activeNotification.account_last_digits}
                 </p>
               )}
-              {activeNotification.counterparty_name ? (
+              {activeNotification.bank_name === 'PSE/ACH Colombia' ? null : activeNotification.counterparty_name ? (
                 <p>
                   <span className="font-semibold">Remitente:</span> {activeNotification.counterparty_name}
                 </p>

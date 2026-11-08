@@ -417,6 +417,48 @@ describe('recepción automática de avisos bancarios (webhook, autenticación y 
     })
   })
 
+  it('clasifica QR en texto y HTML con autenticación bancaria sin aceptar un pagaste aislado', () => {
+    const text = 'Bancolombia: PERSONA DE PRUEBA pagaste $64,000.00 por codigo QR desde tu cuenta *1234 a la llave 0000123456 el 08/11/2026 a las 10:03. Con codigo QR es facil y de una.'
+    for (const from of ['alertasynotificaciones@an.bancolombia.com.co', 'alertasynotificaciones@ayn.bancolombia.com.co']) {
+      for (const content of [{ text }, { html: `<p>${text.replace('codigo QR', 'código QR')}</p><footer>Línea: 3001234567</footer>` }]) {
+        const result = classifyInboundEmail({ id: 'em_qr', from, authentication: { dkim: 'pass', dmarc: 'pass' }, ...content })
+        expect(result.kind).toBe('bank_notification')
+        if (result.kind === 'bank_notification') expect(result.parsed).toMatchObject({ amount: 64000, notification_type: 'purchase', account_last_digits: '1234', merchant: null })
+      }
+    }
+    expect(classifyInboundEmail({ id: 'em_bad', from: 'alertasynotificaciones@an.bancolombia.com.co', authentication: { dkim: 'pass' }, text: text.replace('por codigo QR', 'en una tienda') }).kind).toBe('ignored')
+    expect(classifyInboundEmail({ id: 'em_spoof', from: 'atacante@ejemplo.com', authentication: { dkim: 'pass', dmarc: 'pass' }, text }).kind).toBe('ignored')
+  })
+
+  it('acepta PSE solo del remitente exacto con autenticación alineada y estado aprobado', async () => {
+    const text = 'Estado de la Transacción: Aprobada\nValor: $ 27.500,00\nEmpresa: EMPRESA DE PRUEBA S.A.S.\nDescripción: COMPRA DE PRUEBA\nFecha de la transacción: 07/11/2026\nCUS: 000123456'
+    const base: ReceivedEmailPayload = { id: 'em_pse', from: 'serviciopse@achcolombia.com.co', authentication: { dkim: 'pass', dmarc: 'pass' }, text }
+    for (const content of [{ text }, { html: `<p>${text.split('\n').join('</p><p>')}</p>` }]) {
+      const result = classifyInboundEmail({ ...base, text: null, ...content })
+      expect(result.kind).toBe('bank_notification')
+      if (result.kind === 'bank_notification') expect(result.parsed).toMatchObject({ bank_name: 'PSE/ACH Colombia', amount: 27500, occurred_on: '2026-11-07', occurred_time: null, provider_reference: '000123456', account_last_digits: null })
+    }
+    for (const email of [
+      { ...base, from: 'otro@achcolombia.com.co' },
+      { ...base, authentication: { dkim: 'pass', dmarc: 'fail' } },
+      { ...base, authentication: { dkim: 'pass' }, headers: { 'dkim-signature': 'd=achcolombia.com.co; b=abc' } },
+      { ...base, authentication: { dkim: 'pass' }, headers: { 'dkim-signature': 'd=atacante.com; b=abc' } },
+      { ...base, authentication: null },
+      { ...base, text: text.replace('Aprobada', 'Rechazada') },
+      { ...base, text: `${text}\nEstado de la Transacción: Pendiente` },
+      { ...base, html: `<p>${text.replace('Aprobada', 'Rechazada').split('\n').join('</p><p>')}</p>` },
+      { ...base, text: text.replace('27.500,00', '27.500,50') },
+    ]) expect(classifyInboundEmail(email).kind).toBe('ignored')
+
+    const admin = createFakeAdmin()
+    admin.rpc.mockResolvedValue({ data: { outcome: 'created', is_new_notification: true, user_id: 'user-a', notification_id: 'notif-pse' }, error: null })
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ ...base, received_for: `${ALIAS_USER_A}@${INBOUND_DOMAIN}` }))
+    const handler = createBankEmailWebhookHandler({ ...baseConfig, pushConfigured: false }, admin.client, null, fetcher, () => FIXED_NOW)
+    const response = await handler(await buildSignedRequest({ type: 'email.received', data: { email_id: 'em_pse', received_for: [`${ALIAS_USER_A}@${INBOUND_DOMAIN}`] } }))
+    expect((await response.json()).status).toBe('accepted')
+    expect(admin.rpc).toHaveBeenCalledWith('ingest_movement_notice', expect.objectContaining({ p_alias_local_part: ALIAS_USER_A, p_provider_reference: '000123456', p_occurred_time: null, p_amount: 27500 }))
+  })
+
   it('aísla usuarios A y B, rechaza alias desactivados/reemplazados, evita duplicados en reintentos, acepta dos compras legítimas similares y mantiene el pendiente si falla el push', async () => {
     const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -757,7 +799,7 @@ describe('recepción automática de avisos bancarios (webhook, autenticación y 
 
     // Comprobar que se vinculó al alias real del sobre y no al destinatario visible
     expect(admin.rpc).toHaveBeenCalledWith(
-      'ingest_bank_inbound_notification',
+      'ingest_movement_notice',
       expect.objectContaining({
         p_alias_local_part: ALIAS_USER_A,
         p_amount: 39900,

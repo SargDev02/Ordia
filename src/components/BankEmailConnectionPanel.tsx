@@ -268,7 +268,7 @@ export function BankEmailConnectionPanel({
   }
 
   const gmailFilterQuery =
-    'from:(alertasynotificaciones@bancolombia.com.co OR alertasynotificaciones@notificacionesbancolombia.com) ("Compraste" OR "Transferiste" OR "Recibiste una transferencia")'
+    'from:(alertasynotificaciones@an.bancolombia.com.co OR alertasynotificaciones@ayn.bancolombia.com.co OR alertasynotificaciones@bancolombia.com.co OR alertasynotificaciones@notificacionesbancolombia.com OR serviciopse@achcolombia.com.co)'
 
   return (
     <div className="mt-5 rounded-2xl border border-[#dce6d9] bg-[#f8faf6] p-4 sm:p-5">
@@ -281,7 +281,7 @@ export function BankEmailConnectionPanel({
             </span>
           </div>
           <p className="mt-1 text-xs leading-5 text-[#66796f]">
-            Recibe automáticamente solo tus avisos de Bancolombia mediante un filtro de Gmail, sin dar acceso OAuth ni leer toda tu bandeja.
+            Recibe automáticamente tus avisos de Bancolombia y comprobantes PSE mediante un filtro de Gmail, sin dar acceso OAuth ni leer toda tu bandeja.
           </p>
         </div>
         <button
@@ -325,7 +325,7 @@ export function BankEmailConnectionPanel({
               {stateKind === 'unconfigured' && (
                 <div className="rounded-xl border border-[#d6e1d3] bg-white p-4">
                   <p className="text-xs leading-5 text-[#52675d]">
-                    Genera una dirección privada y exclusiva para tu cuenta de Ordia. Solo aceptará correos autenticados de Bancolombia reenviados automáticamente por tu filtro de Gmail.
+                    Genera una dirección privada y exclusiva para tu cuenta de Ordia. Solo aceptará correos autenticados de Bancolombia o PSE reenviados automáticamente por tu filtro de Gmail.
                   </p>
                   <button
                     className="mt-3 rounded-xl bg-[#173f31] px-4 py-2 text-xs font-semibold text-white hover:bg-[#24533f] disabled:opacity-50"
@@ -476,7 +476,7 @@ export function BankEmailConnectionPanel({
                   {/* Guía paso a paso de filtro selectivo (nunca reenvío global) */}
                   <details className="rounded-xl border border-[#e2eae0] bg-[#fbfcfa] p-3.5 text-xs leading-5 text-[#52675d]">
                     <summary className="cursor-pointer font-semibold text-[#264a3c]">
-                      Cómo configurar en Gmail solo los avisos de Bancolombia
+                      Cómo configurar en Gmail solo los avisos de Bancolombia y PSE
                     </summary>
                     <ol className="mt-2.5 list-decimal space-y-1.5 pl-5">
                       <li>
@@ -506,7 +506,7 @@ export function BankEmailConnectionPanel({
                       </li>
                     </ol>
                     <p className="mt-2 text-[11px] text-[#718279]">
-                      Ordia verifica la firma del webhook y los metadatos DKIM/DMARC/ARC del filtro automático de Gmail para dominios oficiales de Bancolombia. Un reenvío manual con el botón «Reenviar» cambia el remitente a tu Gmail y se ignora por seguridad; para correos anteriores usa el recuadro de pegado manual.
+                      Ordia verifica la firma del webhook, el remitente original y la autenticación DKIM/DMARC de Bancolombia o ACH Colombia. El remitente PSE admitido es exactamente serviciopse@achcolombia.com.co. Un reenvío manual con el botón «Reenviar» cambia el remitente a tu Gmail y se ignora por seguridad; para correos anteriores usa el recuadro de pegado manual.
                     </p>
                   </details>
                 </div>
