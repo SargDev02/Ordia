@@ -186,6 +186,18 @@ export async function archiveAccount(accountId: string) {
 }
 
 export async function createTransaction(requestId: string, input: TransactionInput) {
+  if (input.kind === 'adjustment') {
+    const { error } = await client().rpc('create_balance_adjustment', {
+      p_request_id: requestId,
+      p_account_id: input.account_id,
+      p_direction: input.adjustment_direction,
+      p_amount: input.amount,
+      p_occurred_on: input.occurred_on,
+      p_description: input.description,
+    })
+    if (error) fail('No pudimos registrar el ajuste. Comprueba la cuenta y vuelve a intentarlo.')
+    return
+  }
   const { error } = await client().rpc('create_financial_transaction', {
     p_account_id: input.account_id,
     p_amount: input.amount,
@@ -217,7 +229,9 @@ export async function archiveCategory(categoryId: string) {
 }
 
 export async function updateTransaction(transactionId: string, input: TransactionInput) {
-  const { error } = await client().from('financial_transactions').update(input).eq('id', transactionId)
+  const { error } = await client().from('financial_transactions').update({
+    ...input, adjustment_direction: input.kind === 'adjustment' ? input.adjustment_direction : null,
+  }).eq('id', transactionId)
   if (error) fail('No pudimos actualizar el movimiento.')
 }
 

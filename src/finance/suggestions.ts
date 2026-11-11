@@ -370,7 +370,7 @@ export function generateFinancialSuggestions({
   // -------------------------------------------------------------
   // Filtrar movimientos del período para las cuentas seleccionadas (sin transferencias ni eliminados)
   const periodTransactions = transactions.filter((t) => {
-    if (t.deleted_at || t.kind === 'transfer') return false
+    if (t.deleted_at || (t.kind !== 'income' && t.kind !== 'expense')) return false
     if (!selectedAccountIds.has(t.account_id)) return false
     if (t.occurred_on < periodStart || t.occurred_on > periodEnd) return false
     return true

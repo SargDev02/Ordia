@@ -115,6 +115,75 @@ describe('acciones financieras rápidas', () => {
     mocks.createCategory.mockResolvedValue(undefined)
   })
 
+  it('recorre crear, editar y eliminar un ajuste con confirmación conservando ingresos y gastos', async () => {
+    const user = userEvent.setup()
+    mocks.finance.accounts = [{ ...account('account-a', 'Principal'), initial_balance: 50000 }]
+    mocks.createTransaction.mockImplementation(async (requestId, input) => {
+      mocks.finance.transactions = [{ ...input, id: 'adjustment', client_request_id: requestId, user_id: 'user-a',
+        created_at: '', updated_at: '', deleted_at: null }]
+    })
+    mocks.updateTransaction.mockImplementation(async (id, input) => {
+      mocks.finance.transactions = mocks.finance.transactions.map(tx => tx.id === id ? { ...tx, ...input } : tx)
+    })
+    mocks.deleteTransaction.mockImplementation(async (id) => {
+      mocks.finance.transactions = mocks.finance.transactions.map(tx => tx.id === id ? { ...tx, deleted_at: '2026-11-11T12:00:00Z' } : tx)
+    })
+    renderHome()
+    function checkBalance(amount: string) {
+      expect(screen.getByText('Saldo total').closest('article')).toHaveTextContent(amount)
+      expect(screen.getByText('Ingresos del período').closest('article')).toHaveTextContent(/\$\s*0/)
+      expect(screen.getByText('Gastos del período').closest('article')).toHaveTextContent(/\$\s*0/)
+    }
+    checkBalance('50.000')
+    await user.click(screen.getByRole('button', { name: 'Ajuste de saldo' }))
+    await user.selectOptions(screen.getByLabelText('Cuenta'), 'account-a')
+    await user.type(screen.getByLabelText('Importe'), '3000')
+    await user.type(screen.getByLabelText('Motivo (opcional)'), 'Conciliación de prueba')
+    await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    checkBalance('47.000')
+    const row = screen.getByText('Conciliación de prueba').closest('article')!
+    expect(row).toHaveTextContent(/−.*3.000/)
+    expect(row).toHaveTextContent('Principal')
+    await user.click(within(row).getByRole('button', { name: 'Editar' }))
+    await user.clear(screen.getByLabelText('Importe')); await user.type(screen.getByLabelText('Importe'), '2000')
+    expect(screen.getByText(/Saldo actual:/)).toHaveTextContent(/47.000.*48.000/)
+    await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    checkBalance('48.000')
+    await user.click(within(screen.getByText('Conciliación de prueba').closest('article')!).getByRole('button', { name: 'Eliminar' }))
+    checkBalance('48.000'); expect(mocks.deleteTransaction).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Eliminar movimiento' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    checkBalance('50.000')
+    expect(screen.queryByText('Conciliación de prueba')).not.toBeInTheDocument()
+    expect(mocks.finance.accounts[0].initial_balance).toBe(50000)
+    mocks.updateTransaction.mockReset(); mocks.deleteTransaction.mockReset()
+  })
+
+  it('registra un aumento y muestra el signo positivo en el historial sin ingresos ni gastos', async () => {
+    const user = userEvent.setup()
+    mocks.finance.accounts = [{ ...account('account-a', 'Principal'), initial_balance: 50000 }]
+    mocks.createTransaction.mockImplementation(async (requestId, input) => {
+      mocks.finance.transactions = [{ ...input, id: 'increase', client_request_id: requestId, user_id: 'user-a',
+        created_at: '', updated_at: '', deleted_at: null }]
+    })
+    renderHome()
+    await user.click(screen.getByRole('button', { name: 'Registrar gasto' }))
+    await user.selectOptions(within(screen.getByRole('dialog')).getByLabelText('Tipo'), 'adjustment')
+    await user.selectOptions(screen.getByLabelText('Cuenta'), 'account-a')
+    await user.selectOptions(screen.getByLabelText('Dirección'), 'increase')
+    await user.type(screen.getByLabelText('Importe'), '3000')
+    await user.type(screen.getByLabelText('Motivo (opcional)'), 'Aumento de prueba')
+    expect(screen.getByText(/Saldo actual:/)).toHaveTextContent(/50.000.*53.000/)
+    await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByText('Aumento de prueba').closest('article')).toHaveTextContent(/\+.*3.000/)
+    expect(screen.getByText('Saldo total').closest('article')).toHaveTextContent('53.000')
+    expect(screen.getByText('Ingresos del período').closest('article')).toHaveTextContent(/\$\s*0/)
+    expect(screen.getByText('Gastos del período').closest('article')).toHaveTextContent(/\$\s*0/)
+  })
+
   it('abre un ingreso preseleccionado y devuelve el foco al cerrar', async () => {
     const user = userEvent.setup()
     renderHome()

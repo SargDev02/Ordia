@@ -1,7 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useFinance } from '../finance/useFinance'
-import { getBogotaToday, getCategoryLabel } from '../finance/calculations'
-import type { FinancialTransaction, TransactionKind } from '../types/finance'
+import { calculateAccountBalance, formatCop, getBogotaToday, getCategoryLabel } from '../finance/calculations'
+import type { AdjustmentDirection, FinancialTransaction, TransactionKind } from '../types/finance'
+import { TRANSACTION_KIND_LABELS } from '../finance/constants'
 import { AuthNotice } from './AuthNotice'
 import { FormField } from './FormField'
 import { CategoryPicker } from './CategoryPicker'
@@ -15,8 +16,9 @@ interface TransactionFormProps {
 }
 
 export function TransactionForm({ initialKind = 'expense', transaction, onCancel, onDirtyChange, onSaved }: TransactionFormProps) {
-  const { accounts, categories, createTransaction, updateTransaction } = useFinance()
+  const { accounts, categories, transactions, createTransaction, updateTransaction } = useFinance()
   const [kind, setKind] = useState<TransactionKind>(transaction?.kind ?? initialKind)
+  const [direction, setDirection] = useState<AdjustmentDirection>(transaction?.adjustment_direction ?? 'decrease')
   const [accountId, setAccountId] = useState(transaction?.account_id ?? '')
   const [destinationId, setDestinationId] = useState(transaction?.destination_account_id ?? '')
   const [amount, setAmount] = useState(String(transaction?.amount ?? ''))
@@ -42,7 +44,7 @@ export function TransactionForm({ initialKind = 'expense', transaction, onCancel
 
   function handleKindChange(nextKind: TransactionKind) {
     setKind(nextKind)
-    setCategoryId(nextKind === 'transfer' ? '' : categories.find((category) => category.kind === nextKind && !category.archived_at)?.id ?? '')
+    setCategoryId(nextKind === 'transfer' || nextKind === 'adjustment' ? '' : categories.find((category) => category.kind === nextKind && !category.archived_at)?.id ?? '')
     if (nextKind !== 'transfer') setDestinationId('')
   }
 
@@ -56,14 +58,15 @@ export function TransactionForm({ initialKind = 'expense', transaction, onCancel
     if (!date) return setError('Selecciona una fecha.')
     if (kind === 'transfer' && !destinationId) return setError('Selecciona la cuenta de destino.')
     if (kind === 'transfer' && destinationId === accountId) return setError('La cuenta de origen y destino deben ser diferentes.')
-    if (kind !== 'transfer' && !categoryId) return setError('Selecciona una categoría activa.')
+    if ((kind === 'income' || kind === 'expense') && !categoryId) return setError('Selecciona una categoría activa.')
 
     setIsSubmitting(true)
     try {
       const input = {
         account_id: accountId,
         amount: parsedAmount,
-        category_id: kind === 'transfer' ? null : categoryId,
+        category_id: kind === 'transfer' || kind === 'adjustment' ? null : categoryId,
+        adjustment_direction: kind === 'adjustment' ? direction : null,
         description: description.trim() || null,
         destination_account_id: kind === 'transfer' ? destinationId : null,
         kind,
@@ -79,18 +82,30 @@ export function TransactionForm({ initialKind = 'expense', transaction, onCancel
     }
   }
 
+  const selectedAccount = accounts.find((account) => account.id === accountId)
+  const currentBalance = selectedAccount ? calculateAccountBalance(selectedAccount, transactions ?? []) : null
+  // Al editar se reemplaza el efecto anterior, incluso si se elige otra cuenta.
+  const balanceWithoutOriginal = selectedAccount
+    ? calculateAccountBalance(selectedAccount, (transactions ?? []).filter((item) => item.id !== transaction?.id)) : null
+  const previewAmount = /^\d+$/.test(amount) && Number.isSafeInteger(Number(amount)) && Number(amount) > 0 && Number(amount) <= 9_000_000_000_000
+    ? BigInt(amount) : null
+  const afterBalance = balanceWithoutOriginal !== null && previewAmount !== null
+    ? balanceWithoutOriginal + (direction === 'increase' ? previewAmount : -previewAmount) : null
+
   return (
     <form className="bg-white p-6 sm:p-8" onChange={markDirty} onSubmit={handleSubmit} aria-busy={isSubmitting}>
-      <div className="mb-6 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#4f8068]">{transaction ? 'Editar movimiento' : 'Nuevo movimiento'}</p><h3 className="mt-2 text-2xl font-semibold text-[#173f31]">{kind === 'transfer' ? 'Transferencia' : kind === 'income' ? 'Ingreso' : 'Gasto'}</h3></div><button className="text-sm font-semibold text-[#66796f]" disabled={isSubmitting} onClick={onCancel} type="button">Cerrar</button></div>
+      <div className="mb-6 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#4f8068]">{transaction ? 'Editar movimiento' : 'Nuevo movimiento'}</p><h3 className="mt-2 text-2xl font-semibold text-[#173f31]">{TRANSACTION_KIND_LABELS[kind]}</h3></div><button className="text-sm font-semibold text-[#66796f]" disabled={isSubmitting} onClick={onCancel} type="button">Cerrar</button></div>
       <div className="grid gap-5 sm:grid-cols-2">
-        <div className="sm:col-span-2"><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-kind">Tipo</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" data-dialog-initial-focus id="transaction-kind" onChange={(event) => handleKindChange(event.target.value as TransactionKind)} value={kind}><option value="expense">Gasto</option><option value="income">Ingreso</option><option value="transfer">Transferencia</option></select></div>
+        <div className="sm:col-span-2"><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-kind">Tipo</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" data-dialog-initial-focus id="transaction-kind" onChange={(event) => handleKindChange(event.target.value as TransactionKind)} value={kind}><option value="expense">Gasto</option><option value="income">Ingreso</option><option value="transfer">Transferencia</option><option value="adjustment">Ajuste de saldo</option></select></div>
         <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-account">{kind === 'transfer' ? 'Cuenta de origen' : 'Cuenta'}</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" id="transaction-account" onChange={(event) => setAccountId(event.target.value)} value={accountId}><option value="">Selecciona una cuenta</option>{availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.archived_at ? ' (archivada)' : ''}</option>)}</select></div>
         {kind === 'transfer' && <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="transaction-destination">Cuenta de destino</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" id="transaction-destination" onChange={(event) => setDestinationId(event.target.value)} value={destinationId}><option value="">Selecciona una cuenta</option>{availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}{account.archived_at ? ' (archivada)' : ''}</option>)}</select></div>}
-        <FormField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="transaction-amount" inputMode="numeric" label="Importe" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
+        {kind === 'adjustment' && <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="adjustment-direction">Dirección</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" disabled={isSubmitting} id="adjustment-direction" value={direction} onChange={(event) => setDirection(event.target.value as AdjustmentDirection)}><option value="increase">Aumentar saldo</option><option value="decrease">Disminuir saldo</option></select></div>}
+        <FormField disabled={isSubmitting} hint={kind === 'adjustment' ? 'Importe que se suma o resta, no el saldo final. Pesos enteros positivos.' : 'Pesos enteros, siempre mayor que cero.'} id="transaction-amount" inputMode="numeric" label="Importe" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
         <FormField disabled={isSubmitting} id="transaction-date" label="Fecha" onChange={(event) => setDate(event.target.value)} type="date" value={date} />
-        {kind !== 'transfer' && <div className="min-w-0 sm:col-span-2"><CategoryPicker categories={categories} disabled={isSubmitting} id="transaction-category" key={kind} onChange={(id) => { if (id !== categoryId) { setCategoryId(id); markDirty() } }} options={categoryOptions} value={categoryId} />{categoryOptions.length === 0 && <p className="mt-2 text-sm text-[#8b554d]">No hay categorías activas de este tipo. Crea una desde “Administrar categorías”.</p>}</div>}
-        <div className={kind === 'transfer' ? 'sm:col-span-2' : ''}><FormField disabled={isSubmitting} id="transaction-description" label="Descripción (opcional)" maxLength={240} onChange={(event) => setDescription(event.target.value)} value={description} /></div>
+        {(kind === 'income' || kind === 'expense') && <div className="min-w-0 sm:col-span-2"><CategoryPicker categories={categories} disabled={isSubmitting} id="transaction-category" key={kind} onChange={(id) => { if (id !== categoryId) { setCategoryId(id); markDirty() } }} options={categoryOptions} value={categoryId} />{categoryOptions.length === 0 && <p className="mt-2 text-sm text-[#8b554d]">No hay categorías activas de este tipo. Crea una desde “Administrar categorías”.</p>}</div>}
+        <div className={kind === 'transfer' ? 'sm:col-span-2' : ''}><FormField disabled={isSubmitting} id="transaction-description" label={kind === 'adjustment' ? 'Motivo (opcional)' : 'Descripción (opcional)'} maxLength={240} onChange={(event) => setDescription(event.target.value)} value={description} /></div>
       </div>
+      {kind === 'adjustment' && currentBalance !== null && afterBalance !== null && <p aria-live="polite" className="mt-5 rounded-2xl bg-[#edf3ea] p-4 text-sm text-[#264a3c]">Saldo actual: {formatCop(currentBalance)} → Saldo después del ajuste: {formatCop(afterBalance)}</p>}
       {error && <div className="mt-5"><AuthNotice tone="error">{error}</AuthNotice></div>}
       <div className="mt-6 flex justify-end"><button className="rounded-2xl bg-[#173f31] px-5 py-3 font-semibold text-white disabled:opacity-60" disabled={isSubmitting || availableAccounts.length === 0} type="submit">{isSubmitting ? 'Guardando…' : 'Guardar movimiento'}</button></div>
     </form>

@@ -573,3 +573,20 @@ describe('motor determinista de sugerencias financieras', () => {
     expect(resultTomorrow.upcomingPaymentsNotice).toBeNull()
   })
 })
+
+
+it('usa el saldo ajustado para cubrir pagos pero excluye los ajustes de flujo y consumo', () => {
+  const input = { accounts: [account('acc-1', 'Banco', 50000)], transactions: [] as FinancialTransaction[],
+    categories: [category('cat-1', 'Servicios', 'expense')], fixedExpenses: [fixedExpense('fe', 'Pago')],
+    fixedExpensePeriods: [period('period', 'fe', '2026-10-29', 49000)],
+    selectedAccountIds: new Set(['acc-1']), now: new Date('2026-10-28T19:00:00Z') }
+  const base = generateFinancialSuggestions(input)
+  const down = generateFinancialSuggestions({ ...input, transactions: [transaction('adjust', 'adjustment', 3000, '2026-10-28', 'acc-1', { category_id: null, adjustment_direction: 'decrease' })] })
+  expect(base.insufficientBalanceNotices).toEqual([])
+  expect(down.insufficientBalanceNotices).toHaveLength(1)
+  expect(down.cashFlowSummaryNotice).toEqual(base.cashFlowSummaryNotice)
+  expect(down.expenseComparisonNotice).toEqual(base.expenseComparisonNotice)
+  const up = generateFinancialSuggestions({ ...input, transactions: [transaction('adjust', 'adjustment', 3000, '2026-10-28', 'acc-1', { category_id: null, adjustment_direction: 'increase' })] })
+  expect(up.insufficientBalanceNotices).toEqual([])
+  expect(up.cashFlowSummaryNotice).toEqual(base.cashFlowSummaryNotice)
+})

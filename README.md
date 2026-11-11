@@ -77,9 +77,11 @@ El modelo se construye con estas migraciones versionadas:
 - `supabase/migrations/20261101133000_add_bank_notifications_inbox.sql`
 - `supabase/migrations/20261102053000_add_bank_email_forwarding_and_push_alerts.sql`
 - `supabase/migrations/20261108154406_add_qr_and_pse_receipts.sql`
+- `supabase/migrations/20261111011925_add_cash_deposit_notifications.sql`
+- `supabase/migrations/20261111172636_add_balance_adjustments.sql`
 
 - `financial_accounts` conserva nombre, tipo, COP, saldo inicial y fecha de archivo.
-- `financial_transactions` representa un ingreso, gasto o transferencia completa. Una transferencia usa una sola fila con origen y destino; por ello se crea, edita o elimina atómicamente y no entra en los totales de ingresos o gastos.
+- `financial_transactions` representa un ingreso, gasto, transferencia completa o ajuste de saldo. Una transferencia usa una sola fila con origen y destino; por ello se crea, edita o elimina atómicamente y no entra en los totales de ingresos o gastos.
 - Los importes se guardan como `bigint` en pesos COP enteros. El límite actual está por debajo del máximo entero seguro de JavaScript, evitando aritmética binaria con decimales.
 - El saldo se deriva siempre de saldo inicial más movimientos vigentes; no existe una columna de saldo mutable que pueda quedar desincronizada.
 - `client_request_id` es único por usuario y la función de creación es idempotente, lo que evita duplicados ante doble envío o reintentos.
@@ -91,6 +93,26 @@ El modelo se construye con estas migraciones versionadas:
 - Archivar una categoría principal archiva también sus subcategorías. Las categorías archivadas no están disponibles para movimientos nuevos, pero conservan el historial y permiten editar otros campos de movimientos existentes.
 
 Cada usuario recibe categorías iniciales editables. La aplicación muestra una subcategoría como `Categoría > Subcategoría` y agrupa los gastos de sus subcategorías una sola vez bajo la categoría principal. Usa `America/Bogota` para los límites mensuales predeterminados.
+
+### Ajustes de saldo
+
+En **Finanzas → Ajuste de saldo**, o seleccionando **Ajuste de saldo** en el tipo de un nuevo movimiento, elige una sola cuenta, **Aumentar saldo** o **Disminuir saldo**, importe positivo en pesos enteros y fecha. El motivo es opcional. El importe es la cantidad que se suma o resta, no el saldo final deseado; no se escribe el signo menos. La vista previa muestra el saldo actual y el resultado antes de guardar. Al editar, sustituye el efecto anterior, incluso si cambias la cuenta.
+
+El ajuste se guarda como `kind = adjustment`, importe positivo y `adjustment_direction = increase/decrease`, sin categoría ni destino. Modifica el saldo derivado de esa cuenta y el total de las cuentas seleccionadas; conserva el saldo inicial. No cuenta como ingreso, gasto, flujo neto, consumo ni gasto por categoría, y no cambia obligaciones o pagos. Las sugerencias para cubrir pagos sí usan el saldo ajustado. No es una coincidencia válida de **Ya lo registré**, ni en la interfaz ni al vincular avisos en SQL.
+
+En **Movimientos** aparece con cuenta, fecha, importe con signo y motivo. Se puede filtrar por tipo, cuenta y fechas, editar y eliminar con confirmación y baja lógica. Al filtrar categorías concretas queda excluido. Reutiliza las mismas filas, RLS por propietario, publicación Realtime e identificador de solicitud por usuario; un reintento de creación no agrega otra fila.
+
+La migración nueva conserva las firmas de los RPC usados por los flujos anteriores y añade `create_balance_adjustment`. No edites las migraciones previas. Comprobación local con la pila de Supabase iniciada:
+
+```powershell
+pnpm exec supabase db query --local --file supabase/checks/balance_adjustments.sql
+```
+
+El chequeo usa datos sintéticos y `ROLLBACK`: saldo inicial $50.000 → ajuste −$3.000 → $47.000 → edición a −$2.000 → $48.000 → eliminación → $50.000; aumento, cambio de dirección, reintento idempotente, importes y forma inválidos, cuentas archivadas, aislamiento entre usuarios y rechazo de vínculos bancarios. Las pruebas de interfaz verifican también la vista previa y el ciclo de edición/eliminación; las de cálculos y sugerencias verifican los totales y la cobertura de pagos.
+
+La validación local pasó `typecheck`, `lint`, 304 pruebas en 34 archivos, `build`, `git diff --check` y cinco chequeos SQL (ajustes, consignaciones, QR/PSE, aislamiento bancario y correo/push). La migración se comprobó en una base **PostgreSQL 17.11 local desechable**, reconstruida con las 18 migraciones completas y un esquema mínimo de Auth/roles. Docker y Podman no están disponibles; queda pendiente comprobar una sesión Auth real y la actualización Realtime entre dos pestañas en la pila completa de Supabase local. No se sustituyen esas pruebas con movimientos en cuentas reales.
+
+La publicación aplica únicamente la migración pendiente del ajuste en Ordia (`dedtyhomynsmvatfnshs`), después de comparar versiones y nombres del historial y revisar el dry-run. El frontend se publica desde `master` mediante Vercel; su estado Ready y el SHA se verifican por separado. Esta entrega no cambia ni redespliega Edge Functions.
 
 ### Búsqueda de categorías en movimientos
 

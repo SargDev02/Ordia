@@ -5,10 +5,10 @@ import type { FinancialCategory, FinancialTransaction, TransactionKind } from '.
 import { FormDialog } from './FormDialog'
 import { TransactionForm } from './TransactionForm'
 
-const mocks = vi.hoisted(() => ({ categories: [] as FinancialCategory[], create: vi.fn(), update: vi.fn(), dirty: vi.fn(), close: vi.fn(), saved: vi.fn() }))
+const mocks = vi.hoisted(() => ({ categories: [] as FinancialCategory[], transactions: [] as FinancialTransaction[], create: vi.fn(), update: vi.fn(), dirty: vi.fn(), close: vi.fn(), saved: vi.fn() }))
 vi.mock('../finance/useFinance', () => ({ useFinance: () => ({
-  categories: mocks.categories,
-  accounts: [{ id: 'account', name: 'Principal', archived_at: null }, { id: 'destination', name: 'Ahorros', archived_at: null }],
+  categories: mocks.categories, transactions: mocks.transactions,
+  accounts: [{ id: 'account', name: 'Principal', archived_at: null, initial_balance: 50000 }, { id: 'destination', name: 'Ahorros', archived_at: null, initial_balance: 10000 }],
   createTransaction: mocks.create, updateTransaction: mocks.update,
 }) }))
 
@@ -37,6 +37,7 @@ async function completeAmount(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.transactions = []
   mocks.create.mockResolvedValue(undefined); mocks.update.mockResolvedValue(undefined)
   mocks.categories = [category('food', 'Alimentación'), category('services', 'Servicios'),
     category('phone', 'Telefonía', 'services'), category('internet', 'Internet', 'services'),
@@ -218,5 +219,53 @@ describe('selector buscable en movimientos', () => {
     await user.type(editAmountInput, '68500')
     await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
     await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('movement', expect.objectContaining({ amount: 68500 })))
+  })
+})
+
+
+describe('ajustes de saldo', () => {
+  it('elige el tipo, muestra el delta y reintenta con el mismo identificador sin categoría ni destino', async () => {
+    const user = userEvent.setup(); render(editor())
+    await user.selectOptions(screen.getByLabelText('Tipo'), 'adjustment')
+    await user.selectOptions(screen.getByLabelText('Cuenta'), 'account')
+    await user.type(screen.getByLabelText('Importe'), '3000')
+    expect(screen.getByLabelText('Importe')).toHaveAttribute('inputmode', 'numeric')
+    expect(screen.queryByLabelText('Categoría')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Cuenta de destino')).not.toBeInTheDocument()
+    expect(screen.getByText(/Saldo actual:/)).toHaveTextContent(/Saldo actual:.*50.000.*Saldo después del ajuste:.*47.000/)
+    await user.type(screen.getByLabelText('Motivo (opcional)'), 'Corrección de prueba')
+    mocks.create.mockRejectedValueOnce(new Error('Reintenta'))
+    await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
+    await screen.findByText('Reintenta')
+    await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
+    await waitFor(() => expect(mocks.saved).toHaveBeenCalledOnce())
+    expect(mocks.create).toHaveBeenCalledTimes(2)
+    expect(mocks.create.mock.calls[0]).toEqual(mocks.create.mock.calls[1])
+    expect(mocks.create.mock.calls[0][1]).toMatchObject({ kind: 'adjustment', adjustment_direction: 'decrease',
+      amount: 3000, category_id: null, destination_account_id: null, description: 'Corrección de prueba' })
+  })
+
+  it('al editar reemplaza el efecto anterior y permite aumentar o cambiar la cuenta', async () => {
+    const user = userEvent.setup()
+    const tx = { ...movement('', 'adjustment'), amount: 3000, category_id: null, adjustment_direction: 'decrease' as const }
+    mocks.transactions = [tx]; render(editor(tx))
+    await user.clear(screen.getByLabelText('Importe')); await user.type(screen.getByLabelText('Importe'), '2000')
+    expect(screen.getByText(/Saldo actual:/)).toHaveTextContent(/47.000.*48.000/)
+    await user.selectOptions(screen.getByLabelText('Dirección'), 'increase')
+    expect(screen.getByText(/Saldo actual:/)).toHaveTextContent(/47.000.*52.000/)
+    await user.selectOptions(screen.getByLabelText('Cuenta'), 'destination')
+    expect(screen.getByText(/Saldo actual:/)).toHaveTextContent(/10.000.*12.000/)
+    await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
+    expect(mocks.update).toHaveBeenCalledWith('movement', expect.objectContaining({ amount: 2000, account_id: 'destination', adjustment_direction: 'increase' }))
+  })
+
+  it.each(['0', '-3000', '1.5', '9000000000001'])('rechaza el importe %s sin guardar', async (amount) => {
+    render(editor(undefined, 'adjustment'))
+    fireEvent.change(screen.getByLabelText('Cuenta'), { target: { value: 'account' } })
+    fireEvent.change(screen.getByLabelText('Importe'), { target: { value: amount } })
+    fireEvent.submit(screen.getByRole('button', { name: 'Guardar movimiento' }).closest('form')!)
+    await screen.findByText('El importe debe ser un número entero positivo en pesos.')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Saldo actual:/)).not.toBeInTheDocument()
   })
 })

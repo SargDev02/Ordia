@@ -365,3 +365,11 @@ describe('validación estricta para «Ya lo registré» (compatibilidad y cuenta
     expect(isTransactionCompatibleWithNotification(tx({ amount: 22000, kind: 'transfer', account_id: 'acc-1', destination_account_id: 'acc-2', category_id: null }), incoming, 'acc-1')).toBe(false)
   })
 })
+
+
+it('nunca ofrece ajustes en Ya lo registré para ningún tipo de aviso', () => {
+  const tx = { user_id: 'u1', amount: 3000, deleted_at: null, kind: 'adjustment', adjustment_direction: 'increase', account_id: 'bank' } as FinancialTransaction
+  for (const notification_type of ['cash_deposit_received', 'purchase', 'transfer_received', 'transfer_sent'] as const) {
+    expect(isTransactionCompatibleWithNotification(tx, { user_id: 'u1', amount: 3000, notification_type }, null)).toBe(false)
+  }
+})

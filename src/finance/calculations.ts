@@ -12,6 +12,10 @@ export function calculateAccountBalance(
 
     if (transaction.kind === 'income' && transaction.account_id === account.id) balance += amount
     if (transaction.kind === 'expense' && transaction.account_id === account.id) balance -= amount
+    if (transaction.kind === 'adjustment' && transaction.account_id === account.id) {
+      if (transaction.adjustment_direction === 'increase') balance += amount
+      if (transaction.adjustment_direction === 'decrease') balance -= amount
+    }
     if (transaction.kind === 'transfer') {
       if (transaction.account_id === account.id) balance -= amount
       if (transaction.destination_account_id === account.id) balance += amount

@@ -130,3 +130,26 @@ describe('cálculos financieros exactos', () => {
     expect(filterTransactions(rows, { accountIds: allAccounts, categoryIds: null }).map((r) => r.id)).toContain('tx-trf')
   })
 })
+
+
+it('ajusta una cuenta y el total, reemplaza al editar y revierte al eliminar sin ingresos ni consumo', () => {
+  const accounts = [account('account-a', 50000), account('account-b', 10000)]
+  const adjustment = transaction('adjust', 'adjustment', 3000, { category_id: null, adjustment_direction: 'decrease' })
+  const base = [transaction('income', 'income', 4000), transaction('expense', 'expense', 4000)]
+  const states = [adjustment, { ...adjustment, amount: 2000 }, { ...adjustment, deleted_at: '2026-10-20T12:00:00Z' },
+    { ...adjustment, amount: 5000, adjustment_direction: 'increase' as const }]
+  for (const [index, state] of states.entries()) {
+    const transactions = [...base, state]
+    expect(calculateAccountBalance(accounts[0], transactions)).toBe([47000n, 48000n, 50000n, 55000n][index])
+    expect(calculateAccountBalance(accounts[1], transactions)).toBe(10000n)
+    expect(accounts.reduce((total, a) => total + calculateAccountBalance(a, transactions), 0n)).toBe([57000n, 58000n, 60000n, 65000n][index])
+    const summary = calculatePeriodSummary(transactions, categories, { accountIds: new Set(['account-a', 'account-b']) }, new Date('2026-10-20T12:00:00Z'))
+    expect(summary.income).toBe(4000n); expect(summary.expense).toBe(4000n)
+    expect([...summary.expensesByCategory.values()]).toEqual([4000n])
+  }
+  const filters = { accountIds: new Set(['account-a']), kind: 'adjustment' as const, dateFrom: '2026-10-01', dateTo: '2026-10-31' }
+  expect(filterTransactions([adjustment], filters)).toEqual([adjustment])
+  expect(filterTransactions([adjustment], { ...filters, accountIds: new Set(['account-b']) })).toEqual([])
+  expect(filterTransactions([adjustment], { ...filters, dateFrom: '2026-10-16' })).toEqual([])
+  expect(filterTransactions([adjustment], { ...filters, categoryIds: new Set(['expense-root']) })).toEqual([])
+})

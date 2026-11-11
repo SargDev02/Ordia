@@ -10,4 +10,5 @@ export const TRANSACTION_KIND_LABELS: Record<TransactionKind, string> = {
   expense: 'Gasto',
   income: 'Ingreso',
   transfer: 'Transferencia',
+  adjustment: 'Ajuste de saldo',
 }

@@ -1,5 +1,6 @@
 export type AccountType = 'cash' | 'bank' | 'wallet'
-export type TransactionKind = 'income' | 'expense' | 'transfer'
+export type TransactionKind = 'income' | 'expense' | 'transfer' | 'adjustment'
+export type AdjustmentDirection = 'increase' | 'decrease'
 
 export interface FinancialAccount {
   id: string
@@ -14,6 +15,7 @@ export interface FinancialAccount {
 }
 
 export interface FinancialTransaction {
+  adjustment_direction?: AdjustmentDirection | null
   id: string
   user_id: string
   kind: TransactionKind
@@ -36,6 +38,7 @@ export interface AccountInput {
 }
 
 export interface TransactionInput {
+  adjustment_direction?: AdjustmentDirection | null
   kind: TransactionKind
   account_id: string
   destination_account_id: string | null
@@ -48,7 +51,7 @@ export interface TransactionInput {
 export interface FinancialCategory {
   id: string
   user_id: string
-  kind: Exclude<TransactionKind, 'transfer'>
+  kind: 'income' | 'expense'
   parent_id: string | null
   name: string
   archived_at: string | null
@@ -57,7 +60,7 @@ export interface FinancialCategory {
 }
 
 export interface CategoryInput {
-  kind: Exclude<TransactionKind, 'transfer'>
+  kind: 'income' | 'expense'
   parent_id: string | null
   name: string
 }
