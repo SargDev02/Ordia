@@ -240,6 +240,8 @@ export async function createBankNotification(requestId: string, input: CreateBan
     p_occurred_on: input.occurred_on,
     p_occurred_time: input.occurred_time,
     p_provider_reference: input.provider_reference ?? null,
+    p_correspondent_name: input.correspondent_name ?? null,
+    p_municipality: input.municipality ?? null,
     p_request_id: requestId,
     p_source_channel: input.source_channel ?? 'manual',
   })

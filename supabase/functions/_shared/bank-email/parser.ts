@@ -1,4 +1,4 @@
-export type SharedBankNotificationType = 'transfer_received' | 'purchase' | 'transfer_sent'
+export type SharedBankNotificationType = 'transfer_received' | 'purchase' | 'transfer_sent' | 'cash_deposit_received'
 
 export interface SharedParsedBankNotification {
   bank_name: string
@@ -7,6 +7,8 @@ export interface SharedParsedBankNotification {
   occurred_on: string
   occurred_time: string | null
   provider_reference?: string | null
+  correspondent_name?: string | null
+  municipality?: string | null
   merchant: string | null
   account_last_digits: string | null
   card_last_digits: string | null
@@ -199,8 +201,15 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
   }
 
   // 1. Detectar tipo de operación
+  const isDeposit = /recibiste\s+una\s+consignaci[oó]n\s+por\s+/i.test(text)
+  const deposit = isDeposit ? /recibiste\s+una\s+consignaci[oó]n\s+por\s+\$\s*([^\s]+)\s+desde\s+el\s+corresponsal\s+(.+?)\s+en\s+(.+?),\s*el\s+\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.exec(text) : null
+  if (isDeposit && (!deposit || /\b(?:pendiente|reversad[ao]|anulad[ao])\b/i.test(text))) {
+    return { success: false, error: 'No se reconoció una consignación recibida completa y exitosa por corresponsal.' }
+  }
   let notificationType: SharedBankNotificationType | null = null
-  if (
+  if (deposit) {
+    notificationType = 'cash_deposit_received'
+  } else if (
     /recibiste\s+una\s+transferencia/i.test(text) ||
     /te\s+(?:hicieron|enviaron|transfirieron)\s+una\s+transferencia/i.test(text) ||
     /abono\s+de\s+transferencia/i.test(text)
@@ -239,6 +248,9 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
     }
   }
   const parsedAmount = amountOutcome.amount
+  if (deposit && tokenResult.token !== deposit[1]) {
+    return { success: false, error: 'El importe de la consignación es ambiguo.' }
+  }
 
   // 3. Extraer fecha y hora en America/Bogota
   // Formatos habituales: "el 31/10/2026 a las 13:28" | "el 17/10/2026 a las 13:17" | "el 20/10/26 a las 21:15"
@@ -318,7 +330,7 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
 
   // 7. Extraer contrapartes (remitente o cuenta destino ajena)
   let counterparty_name: string | null = null
-  const senderMatch = !qrPayment && (
+  const senderMatch = !qrPayment && !deposit && (
     text.match(/\bde\s+"([^"]*)"/i) ||
     text.match(/\bde\s+([A-Za-z0-9\s.]+?)(?=\s+en\s+tu|\s+el|\s*$|\s*,)/i))
   if (senderMatch && senderMatch[1]) {
@@ -352,6 +364,7 @@ export function parseBancolombiaNotification(rawText: string): SharedParseNotifi
       card_type,
       counterparty_name,
       counterparty_account_last_digits,
+      ...(deposit ? { correspondent_name: deposit[2].trim(), municipality: deposit[3].trim() } : {}),
     },
   }
 }

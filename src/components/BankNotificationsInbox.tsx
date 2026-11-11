@@ -32,7 +32,9 @@ interface BankNotificationsInboxProps {
   onDisableAlias?: (aliasId: string) => Promise<BankEmailAlias>
   onCreateNotification: (input: {
     bank_name?: string
-    notification_type: 'transfer_received' | 'purchase' | 'transfer_sent'
+    notification_type: 'transfer_received' | 'purchase' | 'transfer_sent' | 'cash_deposit_received'
+    correspondent_name?: string | null
+    municipality?: string | null
     amount: number
     occurred_on: string
     occurred_time: string | null
@@ -121,7 +123,7 @@ export function BankNotificationsInbox({
 
   // Encontrar cuenta sugerida para formularios de creación (enlace explícito primero; coincidencia de nombre como ayuda visual)
   function findDefaultAccount(notification: BankNotification): string {
-    if (notification.bank_name === 'PSE/ACH Colombia') return ''
+    if (notification.bank_name === 'PSE/ACH Colombia' || notification.notification_type === 'cash_deposit_received') return ''
     const known = resolveKnownAccountId(notification, cardAccountLinks, accounts)
     if (known && activeAccounts.some((a) => a.id === known)) {
       return known
@@ -150,13 +152,13 @@ export function BankNotificationsInbox({
       setSelectedTransferDestinationId(alternateAcc)
     }
 
-    const isIncome = notification.notification_type === 'transfer_received'
+    const isIncome = notification.notification_type === 'transfer_received' || notification.notification_type === 'cash_deposit_received'
     const defaultKind = isIncome ? 'income' : 'expense'
     const defaultCat = categories.find((c) => c.kind === defaultKind && !c.archived_at)?.id ?? ''
     setSelectedCategoryId(defaultCat)
 
     const initialDesc =
-      notification.merchant ||
+      (notification.notification_type === 'cash_deposit_received' ? 'Consignación recibida' : null) || notification.merchant ||
       (notification.notification_type === 'purchase'
         ? 'Compra con tarjeta'
         : notification.notification_type === 'transfer_received'
@@ -216,9 +218,13 @@ export function BankNotificationsInbox({
     if (!activeNotification) return
     setActionError('')
 
-    const kind = activeNotification.notification_type === 'transfer_received' ? 'income' : 'expense'
+    const kind = activeNotification.notification_type === 'transfer_received' || activeNotification.notification_type === 'cash_deposit_received' ? 'income' : 'expense'
     if (!selectedAccountId) {
       setActionError('Selecciona la cuenta para registrar el movimiento.')
+      return
+    }
+    if (activeNotification.notification_type === 'cash_deposit_received' && !activeAccounts.some((account) => account.id === selectedAccountId && account.account_type === 'bank')) {
+      setActionError('Selecciona una cuenta bancaria receptora activa.')
       return
     }
     if (!selectedCategoryId) {
@@ -306,6 +312,7 @@ export function BankNotificationsInbox({
     if (!activeNotification) return []
     return transactions
       .filter((tx) => {
+        if (activeNotification.notification_type === 'cash_deposit_received' && !accounts.some((a) => a.id === tx.account_id && a.account_type === 'bank')) return false
         return isTransactionCompatibleWithNotification(tx, activeNotification, knownAccountIdForActive)
       })
       .sort((a, b) => {
@@ -314,7 +321,7 @@ export function BankNotificationsInbox({
         if (aSameDay !== bSameDay) return aSameDay - bSameDay
         return b.occurred_on.localeCompare(a.occurred_on)
       })
-  }, [activeNotification, knownAccountIdForActive, transactions])
+  }, [accounts, activeNotification, knownAccountIdForActive, transactions])
 
   async function handleLinkExisting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -364,7 +371,7 @@ export function BankNotificationsInbox({
   )
 
   const activeKind = activeNotification
-    ? activeNotification.notification_type === 'transfer_received'
+    ? activeNotification.notification_type === 'transfer_received' || activeNotification.notification_type === 'cash_deposit_received'
       ? 'income'
       : 'expense'
     : 'expense'
@@ -501,8 +508,8 @@ export function BankNotificationsInbox({
                     hasMatchingNotification || hasMatchingUnlinkedTransaction
 
                   const isPurchase = notification.notification_type === 'purchase'
-                  const isTransferReceived = notification.notification_type === 'transfer_received'
-                  const typeLabel = isPurchase
+                  const isTransferReceived = notification.notification_type === 'transfer_received' || notification.notification_type === 'cash_deposit_received'
+                  const typeLabel = notification.notification_type === 'cash_deposit_received' ? 'Consignación recibida' : isPurchase
                     ? notification.bank_name === 'PSE/ACH Colombia' ? 'Pago PSE' : 'Compra o pago'
                     : isTransferReceived
                       ? 'Transferencia recibida'
@@ -552,6 +559,8 @@ export function BankNotificationsInbox({
                         </div>
 
                         <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-[#829188]">
+                          {notification.correspondent_name && <span>Corresponsal: {notification.correspondent_name}</span>}
+                          {notification.municipality && <span>Municipio: {notification.municipality}</span>}
                           {notification.card_last_digits && (
                             <span>
                               {notification.card_type === 'debit' ? 'T.Débito' : 'Tarjeta'} *{notification.card_last_digits}
@@ -636,6 +645,9 @@ export function BankNotificationsInbox({
                 <span className="font-semibold">Fecha:</span> {activeNotification.occurred_on}{activeNotification.occurred_time ? ` a las ${activeNotification.occurred_time} (America/Bogota)` : ''}
               </p>
               {activeNotification.provider_reference && <p><span className="font-semibold">CUS:</span> {activeNotification.provider_reference}</p>}
+              {activeNotification.correspondent_name && <p><span className="font-semibold">Corresponsal:</span> {activeNotification.correspondent_name}</p>}
+              {activeNotification.municipality && <p><span className="font-semibold">Municipio:</span> {activeNotification.municipality}</p>}
+              {activeNotification.notification_type === 'cash_deposit_received' && <p>Depositante y cuenta receptora: no identificados en el aviso.</p>}
               {activeNotification.merchant && (
                 <p>
                   <span className="font-semibold">Comercio:</span> {activeNotification.merchant}
@@ -651,7 +663,7 @@ export function BankNotificationsInbox({
                   <span className="font-semibold">Cuenta:</span> Terminada en {activeNotification.account_last_digits}
                 </p>
               )}
-              {activeNotification.bank_name === 'PSE/ACH Colombia' ? null : activeNotification.counterparty_name ? (
+              {activeNotification.bank_name === 'PSE/ACH Colombia' || activeNotification.notification_type === 'cash_deposit_received' ? null : activeNotification.counterparty_name ? (
                 <p>
                   <span className="font-semibold">Remitente:</span> {activeNotification.counterparty_name}
                 </p>
@@ -670,7 +682,9 @@ export function BankNotificationsInbox({
 
             {/* Modos de acción según tipo de aviso */}
             <div className="mt-5 flex flex-wrap gap-2 border-b border-[#e5ebe2] pb-4">
-              {activeNotification.notification_type === 'transfer_received' ? (
+              {activeNotification.notification_type === 'cash_deposit_received' ? (
+                <button type="button" onClick={() => { setResolutionMode('transaction'); setActionError('') }} className="rounded-xl bg-[#173f31] px-3 py-1.5 text-xs font-semibold text-white">Registrar ingreso</button>
+              ) : activeNotification.notification_type === 'transfer_received' ? (
                 <>
                   <button
                     type="button"
@@ -750,7 +764,7 @@ export function BankNotificationsInbox({
               <form onSubmit={handleConfirmTransaction} className="mt-4 space-y-4">
                 <div>
                   <label htmlFor="review-account" className="block text-xs font-semibold text-[#264a3c]">
-                    Cuenta en Ordia
+                    {activeNotification.notification_type === 'cash_deposit_received' ? 'Cuenta bancaria receptora' : 'Cuenta en Ordia'}
                   </label>
                   <select
                     id="review-account"
@@ -760,7 +774,7 @@ export function BankNotificationsInbox({
                     className="mt-1.5 w-full rounded-xl border border-[#d6e1d3] bg-white px-3 py-2.5 text-sm"
                   >
                     <option value="">Selecciona una cuenta</option>
-                    {activeAccounts.map((account) => (
+                    {activeAccounts.filter((account) => activeNotification.notification_type !== 'cash_deposit_received' || account.account_type === 'bank').map((account) => (
                       <option key={account.id} value={account.id}>
                         {account.name}
                       </option>

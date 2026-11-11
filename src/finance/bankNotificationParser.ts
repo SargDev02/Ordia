@@ -86,6 +86,9 @@ export function isTransactionCompatibleWithNotification(
   if (transaction.deleted_at) return false
   if (transaction.user_id !== notification.user_id) return false
   if (transaction.amount !== notification.amount) return false
+  if (notification.notification_type === 'cash_deposit_received') {
+    return transaction.kind === 'income' && (!knownAccountId || transaction.account_id === knownAccountId)
+  }
 
   if (notification.notification_type === 'purchase') {
     if (transaction.kind !== 'expense') return false

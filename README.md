@@ -265,6 +265,18 @@ El dry-run remoto sobre **Ordia (`dedtyhomynsmvatfnshs`)** propuso exclusivament
 
 Pasaron `pnpm typecheck`, `pnpm lint`, **283 pruebas en 32 archivos**, `pnpm build`, `git diff --check` y los tres chequeos SQL locales: `bank_notifications_isolation.sql`, `bank_email_and_push_isolation.sql` y `qr_pse_receipts.sql`. La disponibilidad de código y esquema en producción se distingue de la recepción de un correo real reenviado por Gmail y de un push en el iPhone, que siguen pendientes de comprobación.
 
+### Consignaciones recibidas por corresponsal — publicación
+
+El parser compartido reconoce «Recibiste una consignación por … desde el corresponsal … en …», con o sin tilde y con hora directamente después de la fecha. El tipo `cash_deposit_received` muestra **Consignación recibida** y conserva corresponsal y municipio por separado del depositante. El aviso no identifica por sí solo al depositante ni la cuenta receptora.
+
+La revisión ofrece **Registrar ingreso**, solicita una cuenta bancaria receptora y una categoría de ingreso. No ofrece transferencia propia ni usa Efectivo como origen. «Ya lo registré» acepta un ingreso bancario existente compatible; recibir, pegar, vincular o descartar no genera un movimiento adicional. La confirmación es atómica e idempotente.
+
+La migración `20261111011925_add_cash_deposit_notifications.sql` se probó sobre el historial completo de 17 migraciones en PostgreSQL 17. `supabase/checks/cash_deposit_notifications.sql` comprueba creación manual y automática, reintentos, confirmación única, vinculación, descarte, saldo bancario e invariancia de Efectivo. Pasaron 289 pruebas en 33 archivos, typecheck, lint, build, revisión del diff y los cuatro chequeos SQL de consignaciones, bandeja, QR/PSE y correo/push.
+
+Antes de publicar se verificaron nombre y referencia de **Ordia (`dedtyhomynsmvatfnshs`)**, las 16 versiones remotas ya aplicadas y su coincidencia con el repositorio y la reconstrucción local. El dry-run propuso solo `20261111011925`; se aplicó una vez, sin seeds, roles ni cambios de Vault. El historial quedó sincronizado y las huellas agregadas de avisos, movimientos, vínculos y Cron se conservaron. Solo se desplegó `bank-email-webhook` v3 (ACTIVE), con sus cinco archivos coincidentes con los locales y rechazo 401 sin firma. Las demás funciones conservaron versiones y contenido. El frontend se publica mediante el push de esta entrega a `master` y el despliegue automático de Vercel.
+
+Para probar manualmente en producción, pega el aviso de $3.000 en **Movimientos por revisar**, comprueba corresponsal, municipio, fecha y acción **Registrar ingreso**, y usa **Descartar → Confirmar descarte** sin registrar el ingreso. Para comprobar correo y push por separado, espera el próximo aviso auténtico reenviado por el filtro selectivo de Gmail y verifica un único pendiente automático; en el iPhone instalado como PWA, habilita **Avisarme de movimientos bancarios** y comprueba la notificación. Una web disponible y un 401 sin firma no prueban recepción de correo bancario ni entrega push real.
+
 ## Tareas y checklist personal
 
 La navegación **Resumen / Gastos fijos / Tareas / Calendario** permite abrir `/tareas` directamente después de iniciar sesión. Los formularios de creación y edición reutilizan el diálogo adaptable con foco inicial, cierre por Escape, retorno de foco y confirmación para descartar cambios. El título es obligatorio (máximo 200 caracteres); descripción (hasta 5.000), duración entera positiva en minutos, vencimiento y programación son opcionales. La prioridad predeterminada es media, con opciones baja y alta.

@@ -9,6 +9,28 @@ import {
 import { parsePseReceipt } from '../../supabase/functions/_shared/bank-email/parser'
 import type { BankCardAccountLink, BankNotification, FinancialAccount, FinancialTransaction } from '../types/finance'
 
+it('reproduce la consignación recibida por corresponsal del aviso reportado', () => {
+  const result = parseMovementNotice('Bancolombia: Recibiste una consignacion por $3,000 desde el corresponsal LA UNION HOSPITAL en LA UNION, el 09/06/26 17:04. Si tienes dudas, llamanos: 018000931987. A tu lado siempre.')
+  expect(result).toMatchObject({ success: true, data: {
+    notification_type: 'cash_deposit_received', amount: 3000, occurred_on: '2026-06-09', occurred_time: '17:04',
+    correspondent_name: 'LA UNION HOSPITAL', municipality: 'LA UNION',
+    account_last_digits: null, counterparty_name: null,
+  } })
+})
+
+it('admite tildes y HTML de consignación y rechaza avisos fallidos, incompletos e importes ambiguos', () => {
+  const text = 'Bancolombia: Recibiste una consignación por $3,000 desde el corresponsal CORRESPONSAL DE PRUEBA en MUNICIPIO DE PRUEBA, el 09/06/26 17:04.'
+  expect(parseMovementNotice(`<p>${text}</p>`).success).toBe(true)
+  for (const bad of [text.replace('$3,000', '$3,000.50'), text.replace('$3,000', '$3 000'), text.replace('09/06/26', '31/02/26'), text.replace('17:04', '25:04'), text.replace('desde el corresponsal', 'desde'), `${text} Consignación rechazada.`, `${text} Estado pendiente.`, `${text} Saldo $200.000`]) {
+    expect(parseMovementNotice(bad).success).toBe(false)
+  }
+  const notice = { user_id: 'u1', notification_type: 'cash_deposit_received' as const, amount: 3000 }
+  const transaction = { user_id: 'u1', amount: 3000, deleted_at: null, kind: 'income', account_id: 'bank' } as FinancialTransaction
+  expect(isTransactionCompatibleWithNotification(transaction, notice, null)).toBe(true)
+  expect(isTransactionCompatibleWithNotification({ ...transaction, kind: 'transfer' }, notice, null)).toBe(false)
+  expect(isTransactionCompatibleWithNotification({ ...transaction, kind: 'expense' }, notice, null)).toBe(false)
+})
+
 describe('parseCopAmount', () => {
   it('parsea importes con coma o punto como separador de miles', () => {
     expect(parseCopAmount('$22,000')).toBe(22000)

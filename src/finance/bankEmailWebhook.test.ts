@@ -18,6 +18,7 @@ const RAW_SECRET_BYTES = new Uint8Array(32).fill(42)
 const WEBHOOK_SECRET = `whsec_${Buffer.from(RAW_SECRET_BYTES).toString('base64')}`
 const INBOUND_DOMAIN = 'avisos-prueba.resend.app'
 const FIXED_NOW = 1_793_550_000
+const CASH_DEPOSIT_NOTICE = 'Bancolombia: Recibiste una consignacion por $3,000 desde el corresponsal LA UNION HOSPITAL en LA UNION, el 09/06/26 17:04. Si tienes dudas, llamanos: 018000931987. A tu lado siempre.'
 
 const ALIAS_USER_A = 'bnc_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 const ALIAS_USER_B = 'bnc_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -99,6 +100,21 @@ function createFakeAdmin(subscriptionsByUser: Record<string, PushTargetSubscript
 }
 
 describe('recepción automática de avisos bancarios (webhook, autenticación y Web Push)', () => {
+  it('recibe la consignación por corresponsal en texto y HTML con las mismas reglas del pegado', async () => {
+    for (const body of [{ text: CASH_DEPOSIT_NOTICE }, { html: `<p>${CASH_DEPOSIT_NOTICE.replace('consignacion', 'consignación')}</p>` }]) {
+      const email = { id: 'deposit-test', from: 'alertasynotificaciones@an.bancolombia.com.co', received_for: `${ALIAS_USER_A}@${INBOUND_DOMAIN}`, authentication: { dmarc: 'pass', dkim: 'pass' }, ...body }
+      const classified = classifyInboundEmail(email)
+      expect(classified).toMatchObject({ kind: 'bank_notification', parsed: { notification_type: 'cash_deposit_received', amount: 3000, occurred_on: '2026-06-09', occurred_time: '17:04', correspondent_name: 'LA UNION HOSPITAL', municipality: 'LA UNION', counterparty_name: null, account_last_digits: null } })
+      const admin = createFakeAdmin()
+      admin.rpc.mockResolvedValue({ data: { outcome: 'created', is_new_notification: true, user_id: 'user-a', notification_id: 'deposit-1' }, error: null })
+      const handler = createBankEmailWebhookHandler({ ...baseConfig, pushConfigured: false }, admin.client, null, vi.fn().mockResolvedValue(Response.json(email)), () => FIXED_NOW)
+      const response = await handler(await buildSignedRequest({ type: 'email.received', data: { email_id: email.id } }))
+      expect((await response.json()).status).toBe('accepted')
+      expect(admin.rpc).toHaveBeenCalledWith('ingest_movement_notice', expect.objectContaining({ p_notification_type: 'cash_deposit_received', p_amount: 3000, p_correspondent_name: 'LA UNION HOSPITAL', p_municipality: 'LA UNION', p_counterparty_name: null, p_account_last_digits: null }))
+      expect(classifyInboundEmail({ ...email, authentication: null }).kind).toBe('ignored')
+      expect(classifyInboundEmail({ ...email, from: 'persona@example.test' }).kind).toBe('ignored')
+    }
+  })
   beforeEach(() => {
     vi.stubGlobal('crypto', webcrypto)
   })

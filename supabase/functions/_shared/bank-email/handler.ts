@@ -228,6 +228,8 @@ export function createBankEmailWebhookHandler(
       p_occurred_on: parsed.occurred_on,
       p_occurred_time: parsed.occurred_time,
       p_provider_reference: parsed.provider_reference ?? null,
+      p_correspondent_name: parsed.correspondent_name ?? null,
+      p_municipality: parsed.municipality ?? null,
       p_merchant: parsed.merchant,
       p_account_last_digits: parsed.account_last_digits,
       p_card_last_digits: parsed.card_last_digits,

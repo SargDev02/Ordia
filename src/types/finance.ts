@@ -134,7 +134,7 @@ export interface FixedExpensePaymentInput {
   amount: number
 }
 
-export type BankNotificationType = 'transfer_received' | 'purchase' | 'transfer_sent'
+export type BankNotificationType = 'transfer_received' | 'purchase' | 'transfer_sent' | 'cash_deposit_received'
 export type BankNotificationStatus = 'pending' | 'resolved' | 'dismissed'
 export type BankEmailAliasStatus = 'pending_confirmation' | 'active' | 'disabled'
 
@@ -167,6 +167,8 @@ export interface BankCardAccountLink {
 }
 
 export interface BankNotification {
+  correspondent_name?: string | null
+  municipality?: string | null
   id: string
   user_id: string
   client_request_id: string
@@ -194,6 +196,8 @@ export interface BankNotification {
 }
 
 export interface CreateBankNotificationInput {
+  correspondent_name?: string | null
+  municipality?: string | null
   bank_name?: string
   source_channel?: 'manual' | 'gmail'
   notification_type: BankNotificationType
@@ -231,6 +235,8 @@ export interface ConfirmNotificationTransferInput {
 }
 
 export interface ParsedBankNotification {
+  correspondent_name?: string | null
+  municipality?: string | null
   bank_name: string
   notification_type: BankNotificationType
   amount: number
