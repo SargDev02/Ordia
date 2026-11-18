@@ -1,3 +1,4 @@
+import { retryBankPush, sendBankPushTargets } from '../bank-push.ts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   classifyInboundEmail,
@@ -73,14 +74,6 @@ function extractMessageIdHeader(email: ReceivedEmailPayload): string | null {
   return null
 }
 
-function sanitizePushError(error: WebPushSenderError): string {
-  if (error.statusCode === 404) return 'subscription_not_found'
-  if (error.statusCode === 410) return 'subscription_expired'
-  if (error.statusCode === 429) return 'provider_rate_limited'
-  if (error.statusCode && error.statusCode >= 500) return 'provider_unavailable'
-  return 'push_delivery_failed'
-}
-
 export function createBankEmailWebhookHandler(
   config: BankEmailWebhookConfig,
   admin: SupabaseClient,
@@ -117,6 +110,7 @@ export function createBankEmailWebhookHandler(
       nowProvider(),
     )
     if (!validSignature) {
+      console.info('ordia_bank_email', { stage: 'signature', outcome: 'invalid_signature' })
       return Response.json({ error: 'No autorizado.' }, { status: 401 })
     }
 
@@ -156,6 +150,7 @@ export function createBankEmailWebhookHandler(
     }
 
     if (emailResponse.status === 404) {
+      console.info('ordia_bank_email', { stage: 'fetch', outcome: 'email_not_found' })
       return Response.json({ status: 'ignored', reason: 'email_not_found' })
     }
 
@@ -182,6 +177,7 @@ export function createBankEmailWebhookHandler(
     })
 
     if (!aliasLocalPart) {
+      console.info('ordia_bank_email', { stage: 'recipient', outcome: 'unmatched_recipient' })
       return Response.json({ status: 'ignored', reason: 'unmatched_recipient' })
     }
 
@@ -189,9 +185,19 @@ export function createBankEmailWebhookHandler(
     const rawMessageId = extractMessageIdHeader(receivedEmail)
     const messageIdHash = rawMessageId ? await sha256Hex(`msgid:${rawMessageId}`) : null
 
+    async function diagnostic(stage: string, outcome: string) {
+      try {
+        const { error } = await admin.rpc('record_bank_email_diagnostic', {
+          p_event_hash: providerEventHash, p_alias_local_part: aliasLocalPart,
+          p_stage: stage, p_outcome: outcome,
+        })
+        if (error) console.warn('ordia_bank_email_diagnostic_unavailable')
+      } catch { console.warn('ordia_bank_email_diagnostic_unavailable') }
+    }
     const classification = classifyInboundEmail(receivedEmail)
 
     if (classification.kind === 'ignored') {
+      await diagnostic('classification', classification.reason)
       return Response.json({ status: 'ignored', reason: classification.reason })
     }
 
@@ -239,111 +245,44 @@ export function createBankEmailWebhookHandler(
     })
 
     if (error || !data) {
+      await diagnostic('ingest', 'ingest_failed')
       return Response.json({ error: 'No se pudo guardar el pendiente bancario.' }, { status: 500 })
     }
 
     const ingestResult = data as IngestNotificationRpcResult
+    await diagnostic('ingest', ingestResult.outcome)
 
     if (ingestResult.outcome === 'alias_not_found' || ingestResult.outcome === 'alias_inactive') {
       return Response.json({ status: 'ignored', reason: ingestResult.outcome })
     }
 
-    if (!ingestResult.is_new_notification || !ingestResult.user_id || !ingestResult.notification_id) {
-      return Response.json({
-        status: 'duplicate',
-        kind: 'bank_notification',
-      })
+    if (!ingestResult.user_id || !ingestResult.notification_id) {
+      return Response.json({ status: 'duplicate', kind: 'bank_notification' })
     }
-
-    // Notificar de inmediato por Web Push únicamente para un pendiente automático nuevo
-    // y solo a los dispositivos activos con `notify_bank_movements = true` de su propietario.
-    // Cualquier fallo de push se captura para que el pendiente siga disponible sin duplicarse.
-    const pushTotals = { processed: 0, sent: 0, failed: 0, invalid: 0, skipped: 0 }
-
-    if (config.pushConfigured && sendPush) {
-      try {
-        const { data: subscriptions, error: subsError } = await admin
-          .from('push_subscriptions')
-          .select('id,user_id,endpoint,p256dh,auth')
-          .eq('user_id', ingestResult.user_id)
-          .eq('active', true)
-          .eq('notify_bank_movements', true)
-          .order('id', { ascending: true })
-
-        if (!subsError && Array.isArray(subscriptions) && subscriptions.length > 0) {
-          const runId = crypto.randomUUID()
-          for (const sub of subscriptions as PushTargetSubscription[]) {
-            if (sub.user_id !== ingestResult.user_id) continue
-
-            const { data: attemptId, error: claimError } = await admin.rpc(
-              'claim_bank_push_notification_attempt',
-              {
-                p_subscription_id: sub.id,
-                p_bank_notification_id: ingestResult.notification_id,
-                p_run_id: runId,
-              },
-            )
-            if (claimError || !attemptId) continue
-            pushTotals.processed += 1
-
-            const { data: deliverable } = await admin.rpc(
-              'is_bank_push_notification_attempt_deliverable',
-              {
-                p_attempt_id: attemptId,
-                p_run_id: runId,
-              },
-            )
-            if (!deliverable) {
-              await admin.rpc('complete_bank_push_notification_attempt', {
-                p_attempt_id: attemptId,
-                p_run_id: runId,
-                p_status: 'skipped',
-                p_http_status: null,
-                p_error_code: 'state_changed',
-              })
-              pushTotals.skipped += 1
-              continue
-            }
-
-            try {
-              await sendPush(
-                sub,
-                JSON.stringify({
-                  kind: 'bank_movement_pending',
-                  tag: `ordia-bank-${attemptId as string}`,
-                }),
-              )
-              await admin.rpc('complete_bank_push_notification_attempt', {
-                p_attempt_id: attemptId,
-                p_run_id: runId,
-                p_status: 'sent',
-                p_http_status: null,
-                p_error_code: null,
-              })
-              pushTotals.sent += 1
-            } catch (caught) {
-              const pushErr = caught as WebPushSenderError
-              const httpStatus = pushErr.statusCode ?? null
-              const isInvalid = httpStatus === 404 || httpStatus === 410
-              await admin.rpc('complete_bank_push_notification_attempt', {
-                p_attempt_id: attemptId,
-                p_run_id: runId,
-                p_status: isInvalid ? 'invalid' : 'failed',
-                p_http_status: httpStatus,
-                p_error_code: sanitizePushError(pushErr),
-              })
-              if (isInvalid) pushTotals.invalid += 1
-              else pushTotals.failed += 1
-            }
-          }
+    let pushTotals = { processed: 0, sent: 0, failed: 0, invalid: 0, skipped: 0 }
+    const sender = config.pushConfigured ? sendPush : null
+    try {
+      if (!ingestResult.is_new_notification) {
+        // Solo reintenta reservas existentes: no notifica retroactivamente a nuevos dispositivos.
+        pushTotals = await retryBankPush(admin, sender, ingestResult.notification_id)
+      } else {
+        const { data: subscriptions, error: subsError } = await admin.from('push_subscriptions')
+          .select('id,user_id,endpoint,p256dh,auth').eq('user_id', ingestResult.user_id)
+          .eq('active', true).eq('notify_bank_movements', true).order('id', { ascending: true })
+        if (subsError) {
+          await diagnostic('push', 'subscription_lookup_failed')
+          return Response.json({ error: 'Pendiente guardado; no se pudo preparar el aviso push.' }, { status: 503 })
         }
-      } catch {
-        // Silenciar errores inesperados del subsistema push sin exponer detalles ni afectar el pendiente guardado
+        const targets = (subscriptions ?? []).filter((sub: PushTargetSubscription) => sub.user_id === ingestResult.user_id)
+        pushTotals = await sendBankPushTargets(admin, targets, sender, ingestResult.notification_id)
+        if (!targets.length) await diagnostic('push', 'no_enabled_devices')
       }
+      if (pushTotals.processed) await diagnostic('push', pushTotals.failed ? 'push_failed' : pushTotals.invalid ? 'subscription_invalid' : pushTotals.sent ? 'provider_accepted' : 'state_changed')
+    } catch {
+      await diagnostic('push', 'push_retry_unavailable')
     }
-
     return Response.json({
-      status: 'accepted',
+      status: ingestResult.is_new_notification ? 'accepted' : 'duplicate',
       kind: 'bank_notification',
       push: pushTotals,
     })

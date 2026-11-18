@@ -34,7 +34,7 @@ export function FinancialSuggestions({ suggestions }: FinancialSuggestionsProps)
             Sugerencias y análisis financiero
           </h2>
           <p className="mt-1 text-sm text-[#66796f]">
-            Observaciones factuales y deterministas basadas exclusivamente en los movimientos y obligaciones registrados en Ordia.
+            Todas las cuentas, incluidas archivadas. Flujo del período {scope.periodStart} a {scope.periodEnd}; obligaciones a hoy y comparación de consumo del mes actual en Bogotá. Los filtros de Movimientos no cambian este alcance.
           </p>
         </div>
         {hasAccountsSelected && (
@@ -47,9 +47,9 @@ export function FinancialSuggestions({ suggestions }: FinancialSuggestionsProps)
       {/* Estado vacío: Sin cuentas seleccionadas */}
       {!hasAccountsSelected || emptyReason === 'no_accounts' ? (
         <div className="mt-5 rounded-2xl border border-dashed border-[#c6d7c3] bg-[#f8faf6] p-6 text-center">
-          <p className="font-semibold text-[#264a3c]">Selecciona cuentas para ver sugerencias</p>
+          <p className="font-semibold text-[#264a3c]">Crea una cuenta para ver sugerencias</p>
           <p className="mt-2 text-sm text-[#66796f]">
-            Selecciona una o varias cuentas en los filtros superiores o pulsa «Todas» para generar el resumen y sugerencias financieras.
+            Crea una cuenta para habilitar las sugerencias financieras.
           </p>
         </div>
       ) : emptyReason === 'no_data' ? (
@@ -313,7 +313,7 @@ export function FinancialSuggestions({ suggestions }: FinancialSuggestionsProps)
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-[#718279]">
                 <span>Ingresos registrados: <strong className="text-[#2f7650]">{formatCop(cashFlowSummaryNotice.income)}</strong></span>
                 <span>Gastos registrados: <strong className="text-[#9a493e]">{formatCop(cashFlowSummaryNotice.expense)}</strong></span>
-                <span>(Excluye transferencias entre cuentas y saldos iniciales)</span>
+                <span>(Excluye transferencias, saldos iniciales y ajustes de saldo)</span>
               </div>
             </article>
           )}

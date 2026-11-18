@@ -8,6 +8,8 @@ import {
   filterTransactions,
   formatCop,
   getBogotaToday,
+  getMonthBounds,
+  getMovementDateRange,
   getCategoryLabel,
 } from '../finance/calculations'
 import { calculateFixedExpenseSummary } from '../finance/recurrence'
@@ -26,6 +28,7 @@ import { HomeCalendar } from '../components/HomeCalendar'
 import { FinancialSuggestions } from '../components/FinancialSuggestions'
 import { BankNotificationsInbox } from '../components/BankNotificationsInbox'
 import { generateFinancialSuggestions } from '../finance/suggestions'
+import { MovementFilterSummary } from '../components/MovementFilterSummary'
 import { useBogotaToday } from '../tasks/useBogotaToday'
 
 type Confirmation = { type: 'archive'; account: FinancialAccount } | { type: 'delete'; transaction: FinancialTransaction }
@@ -47,6 +50,12 @@ export function HomePage() {
   const [actionError, setActionError] = useState('')
   const [accountSelection, setAccountSelection] = useState<string[] | null>(null)
   const [kindFilter, setKindFilter] = useState<TransactionKind | ''>('')
+  const [summaryMonthSelection, setSummaryMonthSelection] = useState<string | null>(null)
+  const [allHistory, setAllHistory] = useState(false)
+  const hookedToday = useBogotaToday()
+  const today = hookedToday || getBogotaToday()
+  const summaryMonth = summaryMonthSelection ?? today.slice(0, 7)
+  const summaryBounds = useMemo(() => getMonthBounds(summaryMonth), [summaryMonth])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([])
@@ -77,31 +86,31 @@ export function HomePage() {
     [finance.categories, validSelectedCategoryIds],
   )
 
-  // Los filtros globales de cuentas/tipo/fechas alimentan el resumen; el filtro de categorías solo afecta el listado de Movimientos
+  const allAccountIds = useMemo(() => new Set(finance.accounts.map((account) => account.id)), [finance.accounts])
+  const movementDates = getMovementDateRange(today, dateFrom, dateTo, allHistory)
+  // El resumen y las sugerencias tienen alcance propio; estos filtros son solo del listado.
   const baseFilters = useMemo(
-    () => ({ accountIds: selectedAccountIds, dateFrom, dateTo, kind: kindFilter }),
-    [dateFrom, dateTo, kindFilter, selectedAccountIds],
+    () => ({ accountIds: selectedAccountIds, dateFrom: movementDates.start, dateTo: movementDates.end, kind: kindFilter }),
+    [movementDates.start, movementDates.end, kindFilter, selectedAccountIds],
   )
   const listFilters = useMemo(
     () => ({ ...baseFilters, categoryIds: expandedCategoryIds }),
     [baseFilters, expandedCategoryIds],
   )
   const summary = useMemo(
-    () => calculatePeriodSummary(finance.transactions, finance.categories, baseFilters),
-    [finance.categories, finance.transactions, baseFilters],
+    () => calculatePeriodSummary(finance.transactions, finance.categories, { accountIds: allAccountIds, dateFrom: summaryBounds.start, dateTo: summaryBounds.end }),
+    [finance.categories, finance.transactions, allAccountIds, summaryBounds],
   )
   const filteredTransactions = useMemo(
     () => filterTransactions(finance.transactions, listFilters),
     [finance.transactions, listFilters],
   )
-  const totalBalance = useMemo(() => finance.accounts.filter((account) => selectedAccountIds.has(account.id)).reduce(
+  const totalBalance = useMemo(() => finance.accounts.reduce(
     (total, account) => total + calculateAccountBalance(account, finance.transactions), 0n,
-  ), [finance.accounts, finance.transactions, selectedAccountIds])
+  ), [finance.accounts, finance.transactions])
   const accountNames = useMemo(() => new Map(finance.accounts.map((account) => [account.id, account.name])), [finance.accounts])
   const categoryNames = useMemo(() => new Map(finance.categories.map((category) => [category.id, category.name])), [finance.categories])
   const fixedPaymentTransactions = useMemo(() => new Set(finance.fixedExpensePeriods.flatMap((period) => period.transaction_id ? [period.transaction_id] : [])), [finance.fixedExpensePeriods])
-  const hookedToday = useBogotaToday()
-  const today = hookedToday || getBogotaToday()
   const fixedExpenseSummary = useMemo(() => calculateFixedExpenseSummary(finance.fixedExpensePeriods, today), [finance.fixedExpensePeriods, today])
   const financialSuggestions = useMemo(() => generateFinancialSuggestions({
     accounts: finance.accounts,
@@ -109,9 +118,9 @@ export function HomePage() {
     categories: finance.categories,
     fixedExpenses: finance.fixedExpenses,
     fixedExpensePeriods: finance.fixedExpensePeriods,
-    selectedAccountIds,
-    dateFrom,
-    dateTo,
+    selectedAccountIds: allAccountIds,
+    dateFrom: summaryBounds.start,
+    dateTo: summaryBounds.end,
     today,
   }), [
     finance.accounts,
@@ -119,10 +128,7 @@ export function HomePage() {
     finance.categories,
     finance.fixedExpenses,
     finance.fixedExpensePeriods,
-    selectedAccountIds,
-    dateFrom,
-    dateTo,
-    today,
+    allAccountIds, summaryBounds, today,
   ])
   const selectionDetail = accountSelection === null
     ? `Todas las cuentas (${finance.accounts.length})`
@@ -215,7 +221,8 @@ export function HomePage() {
         <div><p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#4f8068]">Finanzas personales</p><h1 className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-[#173f31] sm:text-5xl">Tu dinero, con claridad.</h1></div>
         {(finance.error || actionError) && <div className="mt-6"><AuthNotice tone="error">{finance.error || actionError}</AuthNotice><button className="mt-3 text-sm font-semibold text-[#346a52] underline" onClick={() => void finance.refresh()} type="button">Volver a intentar</button></div>}
 
-        <section className="mt-10 grid gap-4 sm:grid-cols-3" aria-label="Resumen financiero filtrado"><SummaryCard label="Saldo total" value={formatCop(totalBalance)} detail={selectionDetail} /><SummaryCard label="Ingresos del período" value={formatCop(summary.income)} detail={`${summary.start} a ${summary.end} · sin saldos iniciales ni transferencias`} tone="positive" /><SummaryCard label="Gastos del período" value={formatCop(summary.expense)} detail={`${summary.start} a ${summary.end} · sin transferencias`} tone="negative" /></section>
+        <div className="mt-8"><label className="text-sm font-semibold" htmlFor="summary-month">Mes del resumen</label><input className="ml-3 rounded-xl border border-[#d6e1d3] bg-white p-2" id="summary-month" type="month" value={summaryMonth} onChange={(event) => setSummaryMonthSelection(event.target.value || null)} /><button className="ml-3 text-sm underline" type="button" onClick={() => setSummaryMonthSelection(null)}>Mes actual del resumen</button><p className="mt-2 text-xs text-[#66796f]">Todas las cuentas, incluidas las archivadas con su saldo conservado. El saldo es actual; ingresos, gastos y diferencia corresponden a {summaryMonth}. Independiente de los filtros de Movimientos.</p></div>
+        <section className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Resumen financiero independiente"><SummaryCard label="Saldo total actual" value={formatCop(totalBalance)} detail="Todas las cuentas, incluidas archivadas · no es un saldo histórico" /><SummaryCard label="Ingresos del período" value={formatCop(summary.income)} detail={`${summary.start} a ${summary.end} · sin saldos iniciales ni transferencias`} tone="positive" /><SummaryCard label="Gastos del período" value={formatCop(summary.expense)} detail={`${summary.start} a ${summary.end} · sin transferencias ni ajustes`} tone="negative" /><SummaryCard label="Diferencia del mes" value={formatCop(summary.income - summary.expense)} detail={`${summary.start} a ${summary.end} · ingresos menos gastos`} /></section>
         <div className="mt-2 flex justify-end gap-4">
           <a
             className="inline-flex items-center gap-1 text-xs font-semibold text-[#2f664d] hover:underline"
@@ -247,6 +254,9 @@ export function HomePage() {
 
         <div id="movimientos-por-revisar" ref={inboxContainerRef}>
           <BankNotificationsInbox
+            fixedExpenses={finance.fixedExpenses}
+            fixedExpensePeriods={finance.fixedExpensePeriods}
+            onPayFixedExpense={finance.payFixedExpenseFromBankNotice}
             accounts={finance.accounts}
             cardAccountLinks={cardAccountLinks}
             categories={finance.categories}
@@ -268,9 +278,11 @@ export function HomePage() {
 
         <section className="mt-12"><SectionHeader title="Cuentas" description="Saldos actuales calculados desde el saldo inicial y todos los movimientos." />{finance.isLoading ? <LoadingBlock /> : activeAccounts.length === 0 ? <EmptyState title="Aún no tienes cuentas" description="Crea tu primera cuenta para empezar a registrar movimientos reales." /> : <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-3">{activeAccounts.map((account) => <AccountCard key={account.id} account={account} balance={calculateAccountBalance(account, finance.transactions)} onEdit={() => openAccount(account)} onArchive={() => setConfirmation({ type: 'archive', account })} />)}</div>}{archivedAccounts.length > 0 && <details className="mt-5 rounded-2xl border border-[#dce6d9] bg-white p-5"><summary className="cursor-pointer font-semibold text-[#456356]">Cuentas archivadas ({archivedAccounts.length})</summary><div className="mt-4 grid gap-3 sm:grid-cols-2">{archivedAccounts.map((account) => <div className="rounded-xl bg-[#f4f7f1] p-4" key={account.id}><p className="font-semibold text-[#52675d]">{account.name}</p><p className="mt-1 text-sm text-[#718279]">Saldo conservado: {formatCop(calculateAccountBalance(account, finance.transactions))}</p><button className="mt-3 text-sm font-semibold text-[#346a52]" onClick={() => openAccount(account)} type="button">Editar datos</button></div>)}</div></details>}</section>
 
-        <section className="mt-14"><SectionHeader title="Movimientos" description="Los filtros de cuentas y fechas se aplican también al resumen; el filtro de categorías refina únicamente esta lista." /><div className="mt-5 rounded-2xl border border-[#dce6d9] bg-white p-4" aria-label="Filtros de movimientos"><AccountMultiSelect accounts={finance.accounts} allSelected={accountSelection === null} selected={selectedAccountIds} onAll={() => setAccountSelection(null)} onClear={() => setAccountSelection([])} onToggle={toggleAccount} /><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><FilterSelect label="Tipo" value={kindFilter} onChange={(value) => setKindFilter(value as TransactionKind | '')} options={Object.entries(TRANSACTION_KIND_LABELS)} /><CategoryMultiFilter categories={finance.categories} id="filter-categorias" onClear={() => setSelectedCategoryIds([])} onToggle={toggleCategoryFilter} selectedIds={validSelectedCategoryIds} transactions={finance.transactions} /><FilterDate label="Desde" value={dateFrom} onChange={setDateFrom} /><FilterDate label="Hasta" value={dateTo} onChange={setDateTo} /></div><div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-[#718279]" aria-live="polite">{selectionDetail}</p><p className="text-xs font-medium text-[#456356]" aria-live="polite">{filteredTransactions.length === 1 ? '1 movimiento coincide' : `${filteredTransactions.length} movimientos coinciden`}</p></div></div>{filteredTransactions.length === 0 ? <EmptyState title={emptyMovementsTitle} description={emptyMovementsDescription} /> : <div className="mt-5 overflow-hidden rounded-[24px] border border-[#dce6d9] bg-white">{filteredTransactions.map((transaction) => <TransactionRow fixedPayment={fixedPaymentTransactions.has(transaction.id)} key={transaction.id} transaction={transaction} accountNames={accountNames} categories={finance.categories} onEdit={() => openTransaction(transaction.kind, transaction)} onDelete={() => setConfirmation({ type: 'delete', transaction })} />)}</div>}</section>
+        <section className="mt-14 pb-16"><div className="mb-5"><h2 className="text-2xl font-semibold tracking-[-0.03em] text-[#173f31]">Gastos del período por categoría</h2><p className="mt-2 text-sm text-[#66796f]">{summary.start} a {summary.end} · Todas las cuentas · Subcategorías sumadas una sola vez · America/Bogota.</p></div>{summary.expensesByCategory.size === 0 ? <EmptyState title="Sin gastos en este alcance" description="Los gastos del mes del resumen, en todas las cuentas, aparecerán agrupados aquí." /> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{[...summary.expensesByCategory.entries()].sort((a, b) => Number(b[1] - a[1])).map(([categoryId, amount]) => <div className="rounded-2xl border border-[#dce6d9] bg-white p-5" key={categoryId}><p className="text-sm text-[#66796f]">{categoryNames.get(categoryId) ?? 'Categoría no disponible'}</p><p className="mt-2 text-xl font-semibold text-[#173f31]">{formatCop(amount)}</p></div>)}</div>}</section>
 
-        <section className="mt-14 pb-16"><div className="mb-5"><h2 className="text-2xl font-semibold tracking-[-0.03em] text-[#173f31]">Gastos del período por categoría</h2><p className="mt-2 text-sm text-[#66796f]">Subcategorías sumadas una sola vez bajo su categoría principal · America/Bogota.</p></div>{summary.expensesByCategory.size === 0 ? <EmptyState title="Sin gastos en este alcance" description="Los gastos del período y cuentas seleccionadas aparecerán agrupados aquí." /> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{[...summary.expensesByCategory.entries()].sort((a, b) => Number(b[1] - a[1])).map(([categoryId, amount]) => <div className="rounded-2xl border border-[#dce6d9] bg-white p-5" key={categoryId}><p className="text-sm text-[#66796f]">{categoryNames.get(categoryId) ?? 'Categoría no disponible'}</p><p className="mt-2 text-xl font-semibold text-[#173f31]">{formatCop(amount)}</p></div>)}</div>}</section>
+        <section className="mt-14"><SectionHeader title="Movimientos" description="Filtros exclusivos de esta lista. Por defecto, mes actual en Bogotá; el resumen superior tiene su propio mes." /><div className="mt-5 rounded-2xl border border-[#dce6d9] bg-white p-4" aria-label="Filtros de movimientos"><AccountMultiSelect accounts={finance.accounts} allSelected={accountSelection === null} selected={selectedAccountIds} onAll={() => setAccountSelection(null)} onClear={() => setAccountSelection([])} onToggle={toggleAccount} /><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><FilterSelect label="Tipo" value={kindFilter} onChange={(value) => setKindFilter(value as TransactionKind | '')} options={Object.entries(TRANSACTION_KIND_LABELS)} /><CategoryMultiFilter categories={finance.categories} id="filter-categorias" onClear={() => setSelectedCategoryIds([])} onToggle={toggleCategoryFilter} selectedIds={validSelectedCategoryIds} transactions={finance.transactions} /><FilterDate label="Desde" value={dateFrom} onChange={(value) => { setDateFrom(value); setAllHistory(false) }} /><FilterDate label="Hasta" value={dateTo} onChange={(value) => { setDateTo(value); setAllHistory(false) }} /></div><div className="mt-4 flex flex-wrap gap-3 text-sm font-semibold"><button type="button" onClick={() => { setDateFrom(''); setDateTo(''); setAllHistory(true) }}>Todo el historial</button><button type="button" onClick={() => { setDateFrom(''); setDateTo(''); setAllHistory(false) }}>Mes actual</button><button type="button" onClick={() => { setAccountSelection(null); setSelectedCategoryIds([]); setKindFilter(''); setDateFrom(''); setDateTo(''); setAllHistory(false) }}>Limpiar filtros</button></div><MovementFilterSummary rows={filteredTransactions} accountIds={selectedAccountIds} period={allHistory ? 'Todo el historial' : `${movementDates.start || 'Sin inicio'} a ${movementDates.end || 'Sin fin'}${!dateFrom && !dateTo ? ' · mes actual (Bogotá)' : ''}`} accounts={accountSelection === null ? selectionDetail : selectedAccountIds.size ? finance.accounts.filter((a) => selectedAccountIds.has(a.id)).map((a) => a.name).join(', ') : 'Ninguna cuenta seleccionada'} categories={validSelectedCategoryIds.length ? validSelectedCategoryIds.map((id) => getCategoryLabel(id, finance.categories)).join(', ') : 'Todas las categorías'} kind={kindFilter ? TRANSACTION_KIND_LABELS[kindFilter] : 'Todos los tipos'} /></div>{filteredTransactions.length === 0 ? <EmptyState title={emptyMovementsTitle} description={emptyMovementsDescription} /> : <div className="mt-5 overflow-hidden rounded-[24px] border border-[#dce6d9] bg-white">{filteredTransactions.map((transaction) => <TransactionRow fixedPayment={fixedPaymentTransactions.has(transaction.id)} key={transaction.id} transaction={transaction} accountNames={accountNames} categories={finance.categories} onEdit={() => openTransaction(transaction.kind, transaction)} onDelete={() => setConfirmation({ type: 'delete', transaction })} />)}</div>}</section>
+
+
       </main>
 
       {editor && <FormDialog onClose={closeEditor} title={editor.type === 'account' ? editor.account ? 'Editar cuenta' : 'Nueva cuenta' : editor.transaction ? 'Editar movimiento' : editor.initialKind === 'income' ? 'Registrar ingreso' : editor.initialKind === 'expense' ? 'Registrar gasto' : editor.initialKind === 'adjustment' ? 'Ajuste de saldo' : 'Transferir'}>{editor.type === 'account' ? <AccountForm account={editor.account} onCancel={closeEditor} onDirtyChange={setEditorDirty} onSaved={() => { setEditorDirty(false); setEditor(null) }} /> : <TransactionForm initialKind={editor.initialKind} transaction={editor.transaction} onCancel={closeEditor} onDirtyChange={setEditorDirty} onSaved={() => { setEditorDirty(false); setEditor(null) }} />}</FormDialog>}

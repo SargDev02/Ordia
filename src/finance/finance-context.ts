@@ -44,6 +44,7 @@ export interface FinanceContextValue {
   createFixedExpense: (requestId: string, input: FixedExpenseInput) => Promise<void>
   deleteTransaction: (transactionId: string) => Promise<void>
   pauseFixedExpense: (fixedExpenseId: string) => Promise<void>
+  payFixedExpenseFromBankNotice: (notificationId: string, periodId: string, requestId: string, input: FixedExpensePaymentInput) => Promise<void>
   payFixedExpensePeriod: (periodId: string, requestId: string, input: FixedExpensePaymentInput) => Promise<void>
   reactivateFixedExpense: (fixedExpenseId: string, nextDueDate: string) => Promise<void>
   removeFixedExpense: (fixedExpenseId: string) => Promise<void>

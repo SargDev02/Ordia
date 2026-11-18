@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { fetchAllRows } from './pagination'
 import type {
   AccountInput,
   BankCardAccountLink,
@@ -57,14 +58,14 @@ export async function fetchFinanceData() {
     cardLinksResult,
     bankEmailAliasResult,
   ] = await Promise.all([
-    api.from('financial_accounts').select('*').order('created_at'),
-    api.from('financial_categories').select('*').order('kind').order('parent_id', { nullsFirst: true }).order('name'),
-    api.from('financial_transactions').select('*').is('deleted_at', null).order('occurred_on', { ascending: false }).order('created_at', { ascending: false }),
-    api.from('fixed_expenses').select('*').order('created_at'),
-    api.from('fixed_expense_versions').select('*').order('effective_from'),
-    api.from('fixed_expense_periods').select('*').order('due_date'),
-    api.from('bank_notifications').select('*').order('occurred_on', { ascending: false }).order('occurred_time', { ascending: false }),
-    api.from('bank_card_account_links').select('*'),
+    fetchAllRows((from, to) => api.from('financial_accounts').select('*').order('created_at').order('id').range(from, to)),
+    fetchAllRows((from, to) => api.from('financial_categories').select('*').order('kind').order('parent_id', { nullsFirst: true }).order('name').order('id').range(from, to)),
+    fetchAllRows((from, to) => api.from('financial_transactions').select('*').is('deleted_at', null).order('occurred_on', { ascending: false }).order('created_at', { ascending: false }).order('id').range(from, to)),
+    fetchAllRows((from, to) => api.from('fixed_expenses').select('*').order('created_at').order('id').range(from, to)),
+    fetchAllRows((from, to) => api.from('fixed_expense_versions').select('*').order('effective_from').order('id').range(from, to)),
+    fetchAllRows((from, to) => api.from('fixed_expense_periods').select('*').order('due_date').order('id').range(from, to)),
+    fetchAllRows((from, to) => api.from('bank_notifications').select('*').order('occurred_on', { ascending: false }).order('occurred_time', { ascending: false }).order('id').range(from, to)),
+    fetchAllRows((from, to) => api.from('bank_card_account_links').select('*').order('id').range(from, to)),
     api.from('bank_email_aliases').select('*').eq('is_current', true).maybeSingle(),
   ])
 
@@ -403,4 +404,12 @@ export async function disableBankEmailAlias(aliasId: string): Promise<BankEmailA
     fail('No recibimos confirmación del servidor al desactivar la dirección.')
   }
   return disabled
+}
+
+export async function payFixedExpenseFromBankNotice(notificationId: string, periodId: string, requestId: string, input: FixedExpensePaymentInput) {
+  const { error } = await client().rpc('pay_fixed_expense_from_bank_notice', {
+    p_notification_id: notificationId, p_period_id: periodId, p_request_id: requestId,
+    p_account_id: input.account_id, p_category_id: input.category_id, p_paid_on: input.paid_on, p_amount: input.amount,
+  })
+  if (error) fail(error.message || 'No pudimos registrar y vincular el pago. No se guardaron cambios parciales.')
 }

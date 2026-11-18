@@ -170,7 +170,7 @@ describe('gastos fijos', () => {
     expect(within(dialog).getByLabelText('Cuenta')).toHaveValue(account.id)
     const paidAmountInput = within(dialog).getByLabelText('Importe pagado (COP)')
     expect(paidAmountInput).toHaveAttribute('inputmode', 'numeric')
-    expect(paidAmountInput).toHaveValue(90000)
+    expect(paidAmountInput).toHaveValue('90.000')
 
     await user.clear(paidAmountInput)
     await user.type(paidAmountInput, '92500')

@@ -3,6 +3,7 @@ import { useFinance } from '../finance/useFinance'
 import type { AccountType, FinancialAccount } from '../types/finance'
 import { AuthNotice } from './AuthNotice'
 import { FormField } from './FormField'
+import { CopAmountInput } from './CopAmountField'
 
 interface AccountFormProps {
   account?: FinancialAccount
@@ -98,15 +99,15 @@ export function AccountForm({ account, onCancel, onDirtyChange, onSaved }: Accou
             >
               ± Signo
             </button>
-            <input
+            <CopAmountInput
               autoComplete="off"
               className="min-w-0 flex-1 rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5 text-base text-[#173f31] outline-none transition placeholder:text-[#9aa9a1] focus:border-[#4f8068] focus:ring-4 focus:ring-[#4f8068]/10 disabled:cursor-not-allowed disabled:bg-[#f0f3ed]"
               disabled={isSubmitting}
               id="account-initial-balance"
               inputMode="numeric"
-              onChange={(event) => setInitialBalance(event.target.value)}
+              onValueChange={setInitialBalance}
               ref={balanceInputRef}
-              type="text"
+              signed
               value={initialBalance}
             />
           </div>

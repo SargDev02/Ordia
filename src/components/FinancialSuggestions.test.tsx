@@ -33,9 +33,9 @@ describe('componente FinancialSuggestions', () => {
     }
 
     renderComponent(emptyResult)
-    expect(screen.getByText('Selecciona cuentas para ver sugerencias')).toBeInTheDocument()
+    expect(screen.getByText('Crea una cuenta para ver sugerencias')).toBeInTheDocument()
     expect(
-      screen.getByText(/Selecciona una o varias cuentas en los filtros superiores/i),
+      screen.getByText(/Crea una cuenta para habilitar/i),
     ).toBeInTheDocument()
   })
 

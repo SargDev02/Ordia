@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateAccountBalance, calculatePeriodSummary, expandSelectedCategoryIds, filterTransactions, getBogotaMonthBounds, getCategoryLabel } from './calculations'
+import { calculateResultTotals, getMonthBounds, getMovementDateRange, calculateAccountBalance, calculatePeriodSummary, expandSelectedCategoryIds, filterTransactions, getBogotaMonthBounds, getCategoryLabel } from './calculations'
 import type { FinancialAccount, FinancialCategory, FinancialTransaction, TransactionKind } from '../types/finance'
 
 function account(id: string, initialBalance = 0): FinancialAccount {
@@ -107,8 +107,8 @@ describe('cálculos financieros exactos', () => {
     // Padre seleccionado -> incluye padre + ambas subcategorías y excluye transferencia y salario
     const expandedParent = expandSelectedCategoryIds(new Set(['cat-serv']), hierarchy)
     expect(filterTransactions(rows, { accountIds: allAccounts, categoryIds: expandedParent }).map((r) => r.id)).toEqual([
-      'tx-parent',
       'tx-tel',
+      'tx-parent',
       'tx-ene',
     ])
 
@@ -121,8 +121,8 @@ describe('cálculos financieros exactos', () => {
     // Padre + hija seleccionados juntos -> cada movimiento aparece una sola vez
     const expandedBoth = expandSelectedCategoryIds(new Set(['cat-serv', 'cat-tel']), hierarchy)
     expect(filterTransactions(rows, { accountIds: allAccounts, categoryIds: expandedBoth }).map((r) => r.id)).toEqual([
-      'tx-parent',
       'tx-tel',
+      'tx-parent',
       'tx-ene',
     ])
 
@@ -152,4 +152,23 @@ it('ajusta una cuenta y el total, reemplaza al editar y revierte al eliminar sin
   expect(filterTransactions([adjustment], { ...filters, accountIds: new Set(['account-b']) })).toEqual([])
   expect(filterTransactions([adjustment], { ...filters, dateFrom: '2026-10-16' })).toEqual([])
   expect(filterTransactions([adjustment], { ...filters, categoryIds: new Set(['expense-root']) })).toEqual([])
+})
+
+
+it('resuelve meses cortos, bisiestos, diciembre/enero y rangos explícitos sin acotar saldos', () => {
+  expect(getMonthBounds('2026-02')).toEqual({ start: '2026-02-01', end: '2026-02-28' })
+  expect(getMonthBounds('2028-02').end).toBe('2028-02-29')
+  expect(getMovementDateRange('2026-12-31')).toEqual({ start: '2026-12-01', end: '2026-12-31' })
+  expect(getMovementDateRange('2027-01-01')).toEqual({ start: '2027-01-01', end: '2027-01-31' })
+  expect(getMovementDateRange('2027-01-01', '2026-10-15', '2026-12-22')).toEqual({ start: '2026-10-15', end: '2026-12-22' })
+  expect(getMovementDateRange('2027-01-01', '', '', true)).toEqual({ start: '', end: '' })
+})
+
+it('totaliza transferencias por sentido, una vez si ambas cuentas están seleccionadas, y ajustes aparte', () => {
+  const transfer = transaction('tr', 'transfer', 1000)
+  const adjustment = transaction('adj', 'adjustment', 200, { category_id: null, adjustment_direction: 'decrease' })
+  const rows = [transfer, adjustment, transaction('in', 'income', 4000), transaction('out', 'expense', 500), transaction('deleted', 'expense', 999, { deleted_at: '2026-10-28' })]
+  expect(calculateResultTotals(rows, new Set(['account-a', 'account-b']))).toEqual({ income: 4000n, expense: 500n, difference: 3500n, transferIn: 0n, transferOut: 0n, transferInternal: 1000n, adjustmentIncrease: 0n, adjustmentDecrease: 200n })
+  expect(calculateResultTotals([transfer], new Set(['account-a'])).transferOut).toBe(1000n)
+  expect(calculateResultTotals([transfer], new Set(['account-b'])).transferIn).toBe(1000n)
 })

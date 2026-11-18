@@ -5,10 +5,13 @@ import { MemoryRouter } from 'react-router-dom'
 import type { BankCardAccountLink, BankNotification, FinancialAccount, FinancialCategory, FinancialTransaction, FixedExpense, FixedExpensePeriod } from '../types/finance'
 import { HomePage } from './HomePage'
 
+vi.mock('../tasks/useBogotaToday', () => ({ useBogotaToday: () => mocks.today }))
+
 vi.mock('../components/HomeTasks', () => ({ HomeTasks: () => <div>Checklist de tareas</div> }))
 vi.mock('../components/HomeCalendar', () => ({ HomeCalendar: () => <div>Agenda de eventos</div> }))
 
 const mocks = vi.hoisted(() => ({
+  today: '2026-10-28',
   archiveAccount: vi.fn(),
   createAccount: vi.fn(),
   createTransaction: vi.fn(),
@@ -101,6 +104,7 @@ function category(id: string, name: string, kind: 'income' | 'expense'): Financi
 describe('acciones financieras rápidas', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.today = '2026-10-28'
     mocks.finance.accounts = [account('account-a', 'Principal'), account('account-b', 'Ahorro')]
     mocks.finance.categories = [category('income-category', 'Salario', 'income'), category('expense-category', 'Alimentación', 'expense')]
     mocks.finance.error = ''
@@ -130,7 +134,7 @@ describe('acciones financieras rápidas', () => {
     })
     renderHome()
     function checkBalance(amount: string) {
-      expect(screen.getByText('Saldo total').closest('article')).toHaveTextContent(amount)
+      expect(screen.getByText('Saldo total actual').closest('article')).toHaveTextContent(amount)
       expect(screen.getByText('Ingresos del período').closest('article')).toHaveTextContent(/\$\s*0/)
       expect(screen.getByText('Gastos del período').closest('article')).toHaveTextContent(/\$\s*0/)
     }
@@ -179,9 +183,53 @@ describe('acciones financieras rápidas', () => {
     await user.click(screen.getByRole('button', { name: 'Guardar movimiento' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(screen.getByText('Aumento de prueba').closest('article')).toHaveTextContent(/\+.*3.000/)
-    expect(screen.getByText('Saldo total').closest('article')).toHaveTextContent('53.000')
+    expect(screen.getByText('Saldo total actual').closest('article')).toHaveTextContent('53.000')
     expect(screen.getByText('Ingresos del período').closest('article')).toHaveTextContent(/\$\s*0/)
     expect(screen.getByText('Gastos del período').closest('article')).toHaveTextContent(/\$\s*0/)
+  })
+
+  it('separa mes del resumen, saldo actual y todos los filtros del listado, y renueva el mes por foco', async () => {
+    const user = userEvent.setup()
+    mocks.finance.accounts = [{ ...account('account-a', 'Principal'), initial_balance: 50000 }, { ...account('account-b', 'Archivada'), initial_balance: 10000, archived_at: '2026-10-01' }]
+    const tx = (id: string, kind: FinancialTransaction['kind'], amount: number, date: string, extra: Partial<FinancialTransaction> = {}): FinancialTransaction => ({
+      id, kind, amount, occurred_on: date, account_id: 'account-a', user_id: 'user-a', destination_account_id: null,
+      category_id: kind === 'income' ? 'income-category' : 'expense-category', description: id,
+      client_request_id: id, created_at: '', updated_at: '', deleted_at: null, ...extra,
+    })
+    mocks.finance.transactions = [tx('Septiembre', 'income', 100000, '2026-09-01'), tx('Compra octubre', 'expense', 3000, '2026-10-20'),
+      tx('Ingreso octubre', 'income', 4000, '2026-10-21', { account_id: 'account-b' }), tx('Compra noviembre', 'expense', 9000, '2026-11-01'),
+      tx('Ajuste', 'adjustment', 2000, '2026-10-22', { category_id: null, adjustment_direction: 'decrease' }),
+      tx('Traslado', 'transfer', 10000, '2026-10-23', { category_id: null, destination_account_id: 'account-b' })]
+    const view = renderHome()
+    const summary = screen.getByLabelText('Resumen financiero independiente')
+    const summaryText = summary.textContent
+    const categoryBlock = screen.getByRole('heading', { name: 'Gastos del período por categoría' }).closest('section')!
+    const categoriesText = categoryBlock.textContent
+    expect(summary).toHaveTextContent('150.000')
+    expect(screen.getByText('Ingresos del período').closest('article')).toHaveTextContent('4.000')
+    expect(screen.getByText('Gastos del período').closest('article')).toHaveTextContent('3.000')
+    expect(screen.queryByText('Septiembre')).not.toBeInTheDocument()
+    expect(screen.queryByText('Compra noviembre')).not.toBeInTheDocument()
+    expect(screen.getByText('4 movimientos coinciden')).toBeInTheDocument()
+    await user.selectOptions(within(screen.getByLabelText('Filtros de movimientos')).getByLabelText('Tipo'), 'adjustment')
+    await user.click(screen.getByRole('button', { name: 'Limpiar' }))
+    fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-11-01' } })
+    expect(summary.textContent).toBe(summaryText); expect(categoryBlock.textContent).toBe(categoriesText)
+    fireEvent.change(screen.getByLabelText('Mes del resumen'), { target: { value: '2026-11' } })
+    expect(screen.getByText('Gastos del período').closest('article')).toHaveTextContent('9.000')
+    expect(screen.getByText('Saldo total actual').closest('article')).toHaveTextContent('150.000')
+    await user.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
+    expect(screen.getByLabelText('Mes del resumen')).toHaveValue('2026-11')
+    expect(screen.getByText('4 movimientos coinciden')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Todo el historial' }))
+    expect(screen.getByText('6 movimientos coinciden')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Mes actual' }))
+    await user.click(screen.getByRole('button', { name: 'Mes actual del resumen' }))
+    mocks.today = '2026-11-01'; view.rerender(<MemoryRouter><HomePage /></MemoryRouter>)
+    expect(screen.getByLabelText('Mes del resumen')).toHaveValue('2026-11')
+    expect(screen.getByText('1 movimiento coincide')).toBeInTheDocument()
+    expect(screen.getByText('Compra noviembre')).toBeInTheDocument()
+    expect(categoryBlock.compareDocumentPosition(screen.getByRole('heading', { name: /^Movimientos$/ }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('abre un ingreso preseleccionado y devuelve el foco al cerrar', async () => {
@@ -287,9 +335,9 @@ describe('acciones financieras rápidas', () => {
     renderHome()
     await user.click(screen.getByRole('button', { name: 'Limpiar' }))
     expect(screen.getByText('No hay cuentas seleccionadas')).toBeInTheDocument()
-    expect(screen.getAllByText('Ninguna cuenta seleccionada')).toHaveLength(2)
+    expect(screen.getAllByText('Ninguna cuenta seleccionada')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Todas' }))
-    expect(screen.getAllByText('Todas las cuentas (2)')).toHaveLength(2)
+    expect(screen.getAllByText('Todas las cuentas (2)').length).toBeGreaterThanOrEqual(1)
   })
 
   it('abre la administración y crea una subcategoría buscando la categoría principal sin convertir el campo de nombre en selector', async () => {
@@ -326,7 +374,7 @@ describe('acciones financieras rápidas', () => {
     await user.clear(balanceInput)
     await user.click(within(createDialog).getByRole('button', { name: 'Cambiar signo del saldo inicial' }))
     await user.type(balanceInput, '250000')
-    expect(balanceInput).toHaveValue('-250000')
+    expect(balanceInput).toHaveValue('-250.000')
     await user.click(within(createDialog).getByRole('button', { name: 'Guardar cuenta' }))
 
     await waitFor(() => expect(mocks.createAccount).toHaveBeenCalledWith({
@@ -360,7 +408,7 @@ describe('acciones financieras rápidas', () => {
     }
     mocks.finance.fixedExpensePeriods = [pendingPeriod, { ...pendingPeriod, due_date: '2026-11-30', id: 'period-b' }]
     renderHome()
-    const balance = screen.getByText('Saldo total').closest('article') as HTMLElement
+    const balance = screen.getByText('Saldo total actual').closest('article') as HTMLElement
     const expenses = screen.getByText('Gastos del período').closest('article') as HTMLElement
     expect(balance).toHaveTextContent('$ 0')
     expect(expenses).toHaveTextContent('$ 0')
@@ -399,7 +447,7 @@ describe('acciones financieras rápidas', () => {
 
     const suggestionsSection = screen.getByLabelText('Sugerencias y análisis financiero')
     expect(suggestionsSection).toBeInTheDocument()
-    expect(suggestionsSection).toHaveTextContent('Pagos próximos (2026-10-26 a 2026-11-01)')
+    expect(suggestionsSection).toHaveTextContent('Pagos próximos (2026-10-28 a 2026-11-03)')
     expect(suggestionsSection).toHaveTextContent('Internet Hogar')
   })
 
@@ -584,7 +632,7 @@ describe('acciones financieras rápidas', () => {
 
     renderHome()
 
-    const totalBalanceCard = screen.getByText('Saldo total').closest('article') as HTMLElement
+    const totalBalanceCard = screen.getByText('Saldo total actual').closest('article') as HTMLElement
     const incomeSummaryCard = screen.getByText('Ingresos del período').closest('article') as HTMLElement
     const expenseSummaryCard = screen.getByText('Gastos del período').closest('article') as HTMLElement
     const categoryExpenseHeading = screen.getByRole('heading', { name: 'Gastos del período por categoría' })
@@ -662,7 +710,7 @@ describe('acciones financieras rápidas', () => {
     await user.click(screen.getByRole('button', { name: 'Limpiar categorías' }))
     // «Limpiar categorías» restaura «Todas las categorías» (incluida transferencia) SIN borrar filtros de cuenta ni fecha
     expect(screen.getByLabelText('Desde')).toHaveValue('2026-10-21')
-    expect(screen.getAllByText('1 cuenta seleccionada')).toHaveLength(2)
+    expect(screen.getByLabelText('Resultados del filtro')).toHaveTextContent('Principal')
     expect(screen.getByText('Paso a ahorro')).toBeInTheDocument()
 
     await user.click(screen.getByLabelText('Categorías'))

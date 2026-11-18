@@ -76,6 +76,8 @@ async function buildSignedRequest(
 
 function createFakeAdmin(subscriptionsByUser: Record<string, PushTargetSubscription[]> = {}) {
   const rpc = vi.fn()
+  const diagnostics = vi.fn().mockResolvedValue({ data: null, error: null })
+  const retries = vi.fn().mockResolvedValue({ data: [], error: null })
   const eqChain = (filters: Record<string, unknown>) => ({
     eq(col: string, val: unknown) {
       return eqChain({ ...filters, [col]: val })
@@ -93,9 +95,9 @@ function createFakeAdmin(subscriptionsByUser: Record<string, PushTargetSubscript
   }))
 
   return {
-    rpc,
+    rpc, diagnostics, retries,
     from,
-    client: { rpc, from } as unknown as SupabaseClient,
+    client: { rpc: (name: string, args: unknown) => name === 'record_bank_email_diagnostic' ? diagnostics(args) : name === 'list_bank_push_retry_targets' ? retries(args) : rpc(name, args), from } as unknown as SupabaseClient,
   }
 }
 
@@ -170,6 +172,22 @@ describe('recepción automática de avisos bancarios (webhook, autenticación y 
       'svix-signature': `v1,invalida== ${validHeaders['svix-signature']}`,
     })
     expect(await verifySvixSignature(raw, multiHeaders, WEBHOOK_SECRET, FIXED_NOW)).toBe(true)
+  })
+
+  it('reintenta una reserva fallida al recibir un duplicado sin crear otro pendiente ni consultar dispositivos nuevos', async () => {
+    const admin = createFakeAdmin()
+    admin.rpc.mockResolvedValueOnce({ data: { outcome: 'duplicate', is_new_notification: false, user_id: 'user-a', notification_id: 'notice' }, error: null })
+      .mockResolvedValueOnce({ data: 'attempt', error: null }).mockResolvedValueOnce({ data: true, error: null }).mockResolvedValueOnce({ data: null, error: null })
+    admin.retries.mockResolvedValue({ data: [{ id: 'device', user_id: 'user-a', endpoint: 'https://push.example.test/test', p256dh: 'test-key', auth: 'test-auth', bank_notification_id: 'notice' }], error: null })
+    const email = { from: 'alertasynotificaciones@an.bancolombia.com.co', received_for: `${ALIAS_USER_A}@${INBOUND_DOMAIN}`,
+      authentication: { dkim: 'pass', dmarc: 'pass' }, text: 'Bancolombia: PERSONA DE PRUEBA pagaste $64,000.00 por codigo QR desde tu cuenta *1234 a la llave 0000123456 el 08/11/2026 a las 10:03.' }
+    const sender = vi.fn().mockResolvedValue(undefined)
+    const handler = createBankEmailWebhookHandler(baseConfig, admin.client, sender, vi.fn().mockResolvedValue(Response.json(email)), () => FIXED_NOW)
+    const result = await handler(await buildSignedRequest({ type: 'email.received', data: { email_id: 'synthetic-retry' } }))
+    expect(await result.json()).toMatchObject({ status: 'duplicate', push: { sent: 1 } })
+    expect(sender).toHaveBeenCalledOnce(); expect(admin.from).not.toHaveBeenCalled()
+    expect(admin.rpc.mock.calls.filter(([name]) => name === 'ingest_movement_notice')).toHaveLength(1)
+    expect(JSON.stringify(admin.diagnostics.mock.calls)).not.toMatch(/64000|1234|PERSONA|endpoint|auth|Bancolombia/)
   })
 
   it('resuelve el alias únicamente desde el destinatario verificado del dominio autorizado y rechaza entregas ambiguas', () => {
@@ -614,7 +632,7 @@ describe('recepción automática de avisos bancarios (webhook, autenticación y 
     const resRetry = await handler(
       await buildSignedRequest({ type: 'email.received', data: { email_id: 'em_legit_1' } }),
     )
-    expect(await resRetry.json()).toEqual({
+    expect(await resRetry.json()).toMatchObject({
       status: 'duplicate',
       kind: 'bank_notification',
     })

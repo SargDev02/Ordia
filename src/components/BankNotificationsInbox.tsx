@@ -13,9 +13,13 @@ import type {
   FinancialAccount,
   FinancialCategory,
   FinancialTransaction,
+  FixedExpense,
+  FixedExpensePaymentInput,
+  FixedExpensePeriod,
 } from '../types/finance'
 import { BankEmailConnectionPanel } from './BankEmailConnectionPanel'
 import { CategoryPicker } from './CategoryPicker'
+import { BankFixedExpensePayment } from './BankFixedExpensePayment'
 
 interface BankNotificationsInboxProps {
   isAvailable?: boolean
@@ -27,6 +31,9 @@ interface BankNotificationsInboxProps {
   accounts: FinancialAccount[]
   categories: FinancialCategory[]
   transactions: FinancialTransaction[]
+  fixedExpenses?: FixedExpense[]
+  fixedExpensePeriods?: FixedExpensePeriod[]
+  onPayFixedExpense?: (noticeId: string, periodId: string, requestId: string, input: FixedExpensePaymentInput) => Promise<void>
   onEnsureOrReplaceAlias?: (replace?: boolean) => Promise<BankEmailAlias>
   onConfirmAlias?: (aliasId: string) => Promise<BankEmailAlias>
   onDisableAlias?: (aliasId: string) => Promise<BankEmailAlias>
@@ -77,7 +84,7 @@ interface BankNotificationsInboxProps {
   onDismissNotification: (notificationId: string) => Promise<void>
 }
 
-type ResolutionMode = 'transaction' | 'transfer' | 'link' | 'dismiss'
+type ResolutionMode = 'fixed-payment' | 'transaction' | 'transfer' | 'link' | 'dismiss'
 
 export function BankNotificationsInbox({
   isAvailable = true,
@@ -89,6 +96,9 @@ export function BankNotificationsInbox({
   accounts,
   categories,
   transactions,
+  fixedExpenses = [],
+  fixedExpensePeriods = [],
+  onPayFixedExpense,
   onEnsureOrReplaceAlias,
   onConfirmAlias,
   onDisableAlias,
@@ -738,6 +748,7 @@ export function BankNotificationsInbox({
                 </button>
               )}
 
+              {onPayFixedExpense && (activeNotification.notification_type === 'purchase' || activeNotification.notification_type === 'transfer_sent') && <button type="button" className="rounded-xl bg-[#edf3ea] px-3 py-2 text-xs font-semibold text-[#315c49]" onClick={() => { setResolutionMode('fixed-payment'); setActionError('') }}>Registrar pago de gasto fijo</button>}
               <button
                 type="button"
                 onClick={() => { setResolutionMode('link'); setActionError('') }}
@@ -758,6 +769,11 @@ export function BankNotificationsInbox({
                 Descartar
               </button>
             </div>
+
+            {resolutionMode === 'fixed-payment' && onPayFixedExpense && <BankFixedExpensePayment
+              notice={activeNotification} expenses={fixedExpenses} periods={fixedExpensePeriods}
+              accountId={resolveKnownAccountId(activeNotification, cardAccountLinks, accounts) ?? ''} onPay={onPayFixedExpense}
+              onCancel={handleCloseReview} onSaved={handleCloseReview} />}
 
             {/* 1. MODO: REGISTRAR COMO GASTO O INGRESO */}
             {resolutionMode === 'transaction' && (
@@ -986,7 +1002,7 @@ export function BankNotificationsInbox({
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="rounded bg-[#edf3ea] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[#315c49]">
-                                {TRANSACTION_KIND_LABELS[tx.kind]}
+                                {TRANSACTION_KIND_LABELS[tx.kind]}{fixedExpensePeriods.find((p) => p.transaction_id === tx.id) ? ` · Gasto fijo · obligación ${fixedExpensePeriods.find((p) => p.transaction_id === tx.id)!.due_date}` : ''}
                               </span>
                               <p className="font-semibold text-[#173f31]">
                                 {tx.description || getCategoryLabel(tx.category_id, categories)}

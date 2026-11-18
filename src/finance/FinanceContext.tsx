@@ -19,6 +19,7 @@ import {
   fetchFinanceData,
   linkBankNotificationToTransaction as linkBankNotificationToTransactionRequest,
   pauseFixedExpense as pauseFixedExpenseRequest,
+  payFixedExpenseFromBankNotice as payFixedExpenseFromBankNoticeRequest,
   payFixedExpensePeriod as payFixedExpensePeriodRequest,
   reactivateFixedExpense as reactivateFixedExpenseRequest,
   removeFixedExpense as removeFixedExpenseRequest,
@@ -45,6 +46,7 @@ import { FinanceContext, type FinanceContextValue, type RealtimeStatus } from '.
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth()
   const userId = session?.user.id ?? ''
+  const [loadedUserId, setLoadedUserId] = useState('')
   const [accounts, setAccounts] = useState<FinancialAccount[]>([])
   const [categories, setCategories] = useState<FinancialCategory[]>([])
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([])
@@ -69,6 +71,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     try {
       const data = await fetchFinanceData()
       if (sequence !== loadSequence.current) return
+      setLoadedUserId(userId)
       setAccounts(data.accounts)
       setCategories(data.categories)
       setTransactions(data.transactions)
@@ -102,6 +105,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       refreshTimer.current = setTimeout(() => void refresh(), 120)
     }
 
+    const refreshWhenVisible = () => { if (document.visibilityState !== 'hidden') scheduleRefresh() }
+    window.addEventListener('focus', refreshWhenVisible)
+    window.addEventListener('online', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
     const filter = `user_id=eq.${userId}`
     const channel = activeClient
       .channel(`finance:${userId}`)
@@ -136,6 +143,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     return () => {
       loadSequence.current += 1
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
+      window.removeEventListener('focus', refreshWhenVisible)
+      window.removeEventListener('online', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
       void activeClient.removeChannel(channel)
     }
   }, [refresh, userId])
@@ -147,20 +157,20 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const value = useMemo<FinanceContextValue>(() => ({
-    accounts,
-    categories,
-    fixedExpenses,
-    fixedExpensePeriods,
-    fixedExpenseVersions,
+    accounts: loadedUserId === userId ? accounts : [],
+    categories: loadedUserId === userId ? categories : [],
+    fixedExpenses: loadedUserId === userId ? fixedExpenses : [],
+    fixedExpensePeriods: loadedUserId === userId ? fixedExpensePeriods : [],
+    fixedExpenseVersions: loadedUserId === userId ? fixedExpenseVersions : [],
     error,
     isLoading,
     realtimeStatus,
-    transactions,
+    transactions: loadedUserId === userId ? transactions : [],
     bankInboxAvailable,
     bankEmailAvailable,
-    bankEmailAlias,
-    bankNotifications,
-    cardAccountLinks,
+    bankEmailAlias: loadedUserId === userId ? bankEmailAlias : null,
+    bankNotifications: loadedUserId === userId ? bankNotifications : [],
+    cardAccountLinks: loadedUserId === userId ? cardAccountLinks : [],
     refresh,
     createAccount: (input) => runAndRefresh(() => createAccountRequest(userId, input)),
     updateAccount: (accountId, input) => runAndRefresh(() => updateAccountRequest(accountId, input)),
@@ -174,6 +184,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     pauseFixedExpense: (fixedExpenseId) => runAndRefresh(() => pauseFixedExpenseRequest(fixedExpenseId)),
     reactivateFixedExpense: (fixedExpenseId, nextDueDate) => runAndRefresh(() => reactivateFixedExpenseRequest(fixedExpenseId, nextDueDate)),
     removeFixedExpense: (fixedExpenseId) => runAndRefresh(() => removeFixedExpenseRequest(fixedExpenseId)),
+    payFixedExpenseFromBankNotice: (noticeId, periodId, requestId, input) => runAndRefresh(() => payFixedExpenseFromBankNoticeRequest(noticeId, periodId, requestId, input)),
     payFixedExpensePeriod: (periodId, requestId, input) => runAndRefresh(() => payFixedExpensePeriodRequest(periodId, requestId, input)),
     undoFixedExpensePayment: (periodId) => runAndRefresh(() => undoFixedExpensePaymentRequest(periodId)),
     updateTransaction: (transactionId, input) => runAndRefresh(() => updateTransactionRequest(transactionId, input)),
@@ -212,7 +223,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       await refresh()
       return result
     },
-  }), [accounts, bankEmailAlias, bankEmailAvailable, bankInboxAvailable, bankNotifications, cardAccountLinks, categories, error, fixedExpensePeriods, fixedExpenseVersions, fixedExpenses, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId])
+  }), [accounts, bankEmailAlias, bankEmailAvailable, bankInboxAvailable, bankNotifications, cardAccountLinks, categories, error, fixedExpensePeriods, fixedExpenseVersions, fixedExpenses, isLoading, realtimeStatus, refresh, runAndRefresh, transactions, userId, loadedUserId])
 
   return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>
 }

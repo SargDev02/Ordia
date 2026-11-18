@@ -5,6 +5,7 @@ import type { FixedExpense, FixedExpenseFrequency, FixedExpenseVersion } from '.
 import { AuthNotice } from './AuthNotice'
 import { CategoryPicker } from './CategoryPicker'
 import { FormField } from './FormField'
+import { CopAmountField } from './CopAmountField'
 
 interface Props {
   expense?: FixedExpense
@@ -62,7 +63,7 @@ export function FixedExpenseForm({ expense, version, onCancel, onDirtyChange, on
       <div className="mb-6 flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#4f8068]">{expense ? 'Editar configuración' : 'Nueva recurrencia'}</p><h3 className="mt-2 text-2xl font-semibold text-[#173f31]">{expense ? expense.name : 'Gasto fijo'}</h3></div><button className="text-sm font-semibold text-[#66796f]" disabled={isSubmitting} onClick={onCancel} type="button">Cerrar</button></div>
       <div className="grid gap-5 sm:grid-cols-2">
         <div className="sm:col-span-2"><FormField data-dialog-initial-focus disabled={isSubmitting} id="fixed-name" label="Nombre" maxLength={120} onChange={(event) => setName(event.target.value)} value={name} /></div>
-        <FormField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="fixed-amount" inputMode="numeric" label="Importe previsto (COP)" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
+        <CopAmountField disabled={isSubmitting} hint="Pesos enteros, siempre mayor que cero." id="fixed-amount" inputMode="numeric" label="Importe previsto (COP)" onValueChange={setAmount} value={amount} />
         <CategoryPicker
           categories={finance.categories}
           disabled={isSubmitting}

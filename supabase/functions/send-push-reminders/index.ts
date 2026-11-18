@@ -1,6 +1,7 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import webpush from 'web-push'
+import { retryBankPush } from '../_shared/bank-push.ts'
 import { addDays, getBogotaClock, getReminderKind, isReminderSendWindow } from '../_shared/reminder-policy.ts'
 
 interface PeriodCandidate {
@@ -38,11 +39,8 @@ Deno.serve(async (request) => {
   }
 
   const clock = getBogotaClock()
-  if (!isReminderSendWindow(clock.hour)) {
-    return Response.json({ date: clock.date, status: 'outside_send_window' })
-  }
-
-  const secretKeys = JSON.parse(configuration.secretKeys) as Record<string, string>
+  let secretKeys: Record<string, string> = {}
+  try { secretKeys = JSON.parse(configuration.secretKeys) as Record<string, string> } catch { /* Mantener clave heredada. */ }
   const adminKey = secretKeys.default ?? configuration.legacyServiceRoleKey
   if (!adminKey) return Response.json({ error: 'No hay una clave de servidor disponible.' }, { status: 503 })
 
@@ -51,6 +49,17 @@ Deno.serve(async (request) => {
   })
   webpush.setVapidDetails(configuration.vapidSubject, configuration.vapidPublicKey, configuration.vapidPrivateKey)
 
+  // El cron existente recupera exclusivamente intentos bancarios ya reservados, incluso fuera del horario de gastos fijos.
+  let bankPush
+  try {
+    bankPush = await retryBankPush(admin, async (subscription, payload) => {
+      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { auth: subscription.auth, p256dh: subscription.p256dh } }, payload, { TTL: 60 * 60 * 12, urgency: 'high' })
+    })
+  } catch { console.warn('ordia_bank_push_retry_unavailable') }
+  if (!isReminderSendWindow(clock.hour)) return Response.json({ date: clock.date, status: 'outside_send_window', bankPush })
+
+  const { error: generationError } = await admin.rpc('generate_fixed_expense_periods_for_reminders')
+  if (generationError) return Response.json({ error: 'No se pudieron actualizar las obligaciones para los recordatorios.', bankPush }, { status: 500 })
   const tomorrow = addDays(clock.date, 1)
   const periods: PeriodCandidate[] = []
   for (let offset = 0; ; offset += PAGE_SIZE) {
@@ -74,7 +83,7 @@ Deno.serve(async (request) => {
     return kind ? [{ kind, period }] : []
   })
   const userIds = [...new Set(candidates.map(({ period }) => period.user_id))]
-  if (userIds.length === 0) return Response.json({ date: clock.date, processed: 0, sent: 0, invalid: 0, failed: 0 })
+  if (userIds.length === 0) return Response.json({ date: clock.date, processed: 0, sent: 0, invalid: 0, failed: 0, bankPush })
 
   const subscriptions: SubscriptionCandidate[] = []
   for (let batchStart = 0; batchStart < userIds.length; batchStart += USER_BATCH_SIZE) {
@@ -144,7 +153,7 @@ Deno.serve(async (request) => {
     }
   }
 
-  return Response.json({ date: clock.date, ...totals })
+  return Response.json({ date: clock.date, ...totals, bankPush })
 })
 
 function getConfiguration() {
@@ -162,7 +171,7 @@ function getConfiguration() {
   return missing.length > 0 ? { ok: false as const, missing } : { ok: true as const, ...values }
 }
 
-async function complete(admin: ReturnType<typeof createClient>, attemptId: string, runId: string, status: 'sent' | 'failed' | 'invalid' | 'skipped', httpStatus: number | null = null, errorCode: string | null = null) {
+async function complete(admin: SupabaseClient, attemptId: string, runId: string, status: 'sent' | 'failed' | 'invalid' | 'skipped', httpStatus: number | null = null, errorCode: string | null = null) {
   await admin.rpc('complete_push_notification_attempt', {
     p_attempt_id: attemptId,
     p_error_code: errorCode,

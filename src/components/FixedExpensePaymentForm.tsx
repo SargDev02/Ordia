@@ -2,20 +2,26 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { getBogotaToday, getCategoryLabel } from '../finance/calculations'
 import { useFinance } from '../finance/useFinance'
-import type { FixedExpense, FixedExpensePeriod } from '../types/finance'
+import type { FixedExpense, FixedExpensePaymentInput, FixedExpensePeriod } from '../types/finance'
 import { AuthNotice } from './AuthNotice'
 import { CategoryPicker } from './CategoryPicker'
 import { FormField } from './FormField'
+import { CopAmountField } from './CopAmountField'
 
-export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChange, onSaved }: { expense: FixedExpense; period: FixedExpensePeriod; onCancel: () => void; onDirtyChange: (dirty: boolean) => void; onSaved: () => void }) {
+export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChange, onSaved, initialPayment, onPay }: {
+  expense: FixedExpense; period: FixedExpensePeriod; onCancel: () => void; onDirtyChange: (dirty: boolean) => void; onSaved: () => void
+  initialPayment?: FixedExpensePaymentInput
+  onPay?: (periodId: string, requestId: string, input: FixedExpensePaymentInput) => Promise<void>
+}) {
   const finance = useFinance()
   const accounts = finance.accounts.filter((account) => !account.archived_at)
   const categories = useMemo(() => finance.categories.filter((category) => category.kind === 'expense' && !category.archived_at)
     .sort((a, b) => getCategoryLabel(a.id, finance.categories).localeCompare(getCategoryLabel(b.id, finance.categories), 'es')), [finance.categories])
-  const [accountId, setAccountId] = useState(accounts.some((item) => item.id === period.suggested_account_id) ? period.suggested_account_id ?? '' : '')
+  const [accountId, setAccountId] = useState(initialPayment?.account_id ?? (accounts.some((item) => item.id === period.suggested_account_id) ? period.suggested_account_id ?? '' : ''))
   const [categoryId, setCategoryId] = useState(categories.some((item) => item.id === period.category_id) ? period.category_id : '')
-  const [amount, setAmount] = useState(String(period.expected_amount))
-  const [paidOn, setPaidOn] = useState(getBogotaToday())
+  const [amount, setAmount] = useState(String(initialPayment?.amount ?? period.expected_amount))
+  const [paidOn, setPaidOn] = useState(initialPayment?.paid_on ?? getBogotaToday())
+  const [confirmed, setConfirmed] = useState(false)
   const [requestId] = useState(() => crypto.randomUUID())
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -25,13 +31,15 @@ export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChan
     setError('')
     const cleanAmount = amount.trim()
     const parsed = /^\d+$/.test(cleanAmount) ? Number(cleanAmount) : Number.NaN
-    if (!accountId) return setError('Selecciona una cuenta activa.')
+    if (!accounts.some((account) => account.id === accountId)) return setError('Selecciona una cuenta activa.')
     if (!categoryId) return setError('Selecciona una categoría activa.')
     if (!paidOn) return setError('Selecciona la fecha real del pago.')
     if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 9_000_000_000_000) return setError('El importe debe ser un número entero positivo en pesos.')
+    if (initialPayment && parsed !== initialPayment.amount) return setError('El importe debe coincidir exactamente con el aviso. No se admiten pagos parciales.')
+    if (initialPayment && !confirmed) return setError('Confirma la cuenta, el importe y la fecha real del pago.')
     setIsSubmitting(true)
     try {
-      await finance.payFixedExpensePeriod(period.id, requestId, { account_id: accountId, category_id: categoryId, paid_on: paidOn, amount: parsed })
+      await (onPay ?? finance.payFixedExpensePeriod)(period.id, requestId, { account_id: accountId, category_id: categoryId, paid_on: paidOn, amount: parsed })
       await finance.refresh()
       onSaved()
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'No pudimos registrar el pago.') }
@@ -43,7 +51,7 @@ export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChan
     <div className="grid gap-5 sm:grid-cols-2">
       <div><label className="mb-2 block text-sm font-medium text-[#264a3c]" htmlFor="payment-account">Cuenta</label><select className="w-full rounded-2xl border border-[#d6e1d3] bg-white px-4 py-3.5" data-dialog-initial-focus id="payment-account" onChange={(event) => setAccountId(event.target.value)} value={accountId}><option value="">Selecciona una cuenta</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
       <FormField disabled={isSubmitting} id="payment-date" label="Fecha real del pago" onChange={(event) => setPaidOn(event.target.value)} type="date" value={paidOn} />
-      <FormField disabled={isSubmitting} hint={`Previsto: ${period.expected_amount.toLocaleString('es-CO')} COP. Puede ser diferente.`} id="payment-amount" inputMode="numeric" label="Importe pagado (COP)" min="1" onChange={(event) => setAmount(event.target.value)} step="1" type="number" value={amount} />
+      <CopAmountField disabled={isSubmitting} hint={`Previsto: ${period.expected_amount.toLocaleString('es-CO')} COP. Puede ser diferente.`} id="payment-amount" inputMode="numeric" label="Importe pagado (COP)" onValueChange={setAmount} value={amount} />
       <CategoryPicker
         categories={finance.categories}
         disabled={isSubmitting}
@@ -61,6 +69,7 @@ export function FixedExpensePaymentForm({ expense, period, onCancel, onDirtyChan
     </div>
     {accounts.length === 0 && <div className="mt-5"><AuthNotice tone="error">Necesitas una cuenta activa para registrar el pago.</AuthNotice><Link className="mt-3 inline-flex text-sm font-semibold text-[#346a52] underline underline-offset-2" to="/">Ir al resumen para crear una cuenta</Link></div>}
     {(!categories.some((item) => item.id === period.category_id) || (period.suggested_account_id && !accounts.some((item) => item.id === period.suggested_account_id))) && <div className="mt-5"><AuthNotice tone="error">La categoría o cuenta sugerida fue archivada. Selecciona una opción activa para continuar.</AuthNotice></div>}
+    {initialPayment && <label className="mt-5 flex items-start gap-3 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={isSubmitting} />Confirmo la cuenta, el importe y la fecha real del pago. Un importe distinto del previsto paga esta obligación completa, sin pagos parciales.</label>}
     {error && <div className="mt-5"><AuthNotice tone="error">{error}</AuthNotice></div>}
     <div className="mt-6 flex justify-end"><button className="rounded-2xl bg-[#173f31] px-5 py-3 font-semibold text-white disabled:opacity-60" disabled={isSubmitting || accounts.length === 0 || categories.length === 0} type="submit">{isSubmitting ? 'Registrando…' : 'Registrar pago'}</button></div>
   </form>

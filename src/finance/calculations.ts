@@ -38,7 +38,12 @@ export function getBogotaToday(now = new Date()) {
 
 export function getBogotaMonthBounds(now = new Date()) {
   const today = getBogotaToday(now)
-  const [year, month] = today.split('-').map(Number)
+  return getMonthBounds(today.slice(0, 7))
+}
+
+export function getMonthBounds(value: string) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new Error('Mes inválido')
+  const [year, month] = value.split('-').map(Number)
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
   return {
     start: `${year}-${String(month).padStart(2, '0')}-01`,
@@ -103,7 +108,34 @@ export function filterTransactions(transactions: FinancialTransaction[], filters
       if (!transaction.category_id || !filters.categoryIds.has(transaction.category_id)) return false
     }
     return true
-  })
+  }).sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))
+}
+
+export function getMovementDateRange(today: string, from = '', to = '', allHistory = false) {
+  return allHistory || from || to ? { start: from, end: to } : getMonthBounds(today.slice(0, 7))
+}
+
+export function calculateResultTotals(rows: FinancialTransaction[], accountIds: ReadonlySet<string>) {
+  const totals = { income: 0n, expense: 0n, difference: 0n, transferIn: 0n, transferOut: 0n, transferInternal: 0n, adjustmentIncrease: 0n, adjustmentDecrease: 0n }
+  for (const row of rows) {
+    if (row.deleted_at) continue
+    const amount = BigInt(row.amount)
+    if (row.kind === 'income') totals.income += amount
+    if (row.kind === 'expense') totals.expense += amount
+    if (row.kind === 'adjustment') {
+      if (row.adjustment_direction === 'increase') totals.adjustmentIncrease += amount
+      if (row.adjustment_direction === 'decrease') totals.adjustmentDecrease += amount
+    }
+    if (row.kind === 'transfer') {
+      const source = accountIds.has(row.account_id)
+      const destination = accountIds.has(row.destination_account_id ?? '')
+      if (source && destination) totals.transferInternal += amount
+      else if (source) totals.transferOut += amount
+      else if (destination) totals.transferIn += amount
+    }
+  }
+  totals.difference = totals.income - totals.expense
+  return totals
 }
 
 export function getCategoryLabel(categoryId: string | null, categories: FinancialCategory[]) {

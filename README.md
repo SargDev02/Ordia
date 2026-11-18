@@ -98,7 +98,7 @@ Cada usuario recibe categorías iniciales editables. La aplicación muestra una 
 
 En **Finanzas → Ajuste de saldo**, o seleccionando **Ajuste de saldo** en el tipo de un nuevo movimiento, elige una sola cuenta, **Aumentar saldo** o **Disminuir saldo**, importe positivo en pesos enteros y fecha. El motivo es opcional. El importe es la cantidad que se suma o resta, no el saldo final deseado; no se escribe el signo menos. La vista previa muestra el saldo actual y el resultado antes de guardar. Al editar, sustituye el efecto anterior, incluso si cambias la cuenta.
 
-El ajuste se guarda como `kind = adjustment`, importe positivo y `adjustment_direction = increase/decrease`, sin categoría ni destino. Modifica el saldo derivado de esa cuenta y el total de las cuentas seleccionadas; conserva el saldo inicial. No cuenta como ingreso, gasto, flujo neto, consumo ni gasto por categoría, y no cambia obligaciones o pagos. Las sugerencias para cubrir pagos sí usan el saldo ajustado. No es una coincidencia válida de **Ya lo registré**, ni en la interfaz ni al vincular avisos en SQL.
+El ajuste se guarda como `kind = adjustment`, importe positivo y `adjustment_direction = increase/decrease`, sin categoría ni destino. Modifica el saldo derivado de esa cuenta y el saldo total actual; conserva el saldo inicial. No cuenta como ingreso, gasto, flujo neto, consumo ni gasto por categoría, y no cambia obligaciones o pagos. Las sugerencias para cubrir pagos sí usan el saldo ajustado. No es una coincidencia válida de **Ya lo registré**, ni en la interfaz ni al vincular avisos en SQL.
 
 En **Movimientos** aparece con cuenta, fecha, importe con signo y motivo. Se puede filtrar por tipo, cuenta y fechas, editar y eliminar con confirmación y baja lógica. Al filtrar categorías concretas queda excluido. Reutiliza las mismas filas, RLS por propietario, publicación Realtime e identificador de solicitud por usuario; un reintento de creación no agrega otra fila.
 
@@ -110,7 +110,7 @@ pnpm exec supabase db query --local --file supabase/checks/balance_adjustments.s
 
 El chequeo usa datos sintéticos y `ROLLBACK`: saldo inicial $50.000 → ajuste −$3.000 → $47.000 → edición a −$2.000 → $48.000 → eliminación → $50.000; aumento, cambio de dirección, reintento idempotente, importes y forma inválidos, cuentas archivadas, aislamiento entre usuarios y rechazo de vínculos bancarios. Las pruebas de interfaz verifican también la vista previa y el ciclo de edición/eliminación; las de cálculos y sugerencias verifican los totales y la cobertura de pagos.
 
-La validación local pasó `typecheck`, `lint`, 304 pruebas en 34 archivos, `build`, `git diff --check` y cinco chequeos SQL (ajustes, consignaciones, QR/PSE, aislamiento bancario y correo/push). La migración se comprobó en una base **PostgreSQL 17.11 local desechable**, reconstruida con las 18 migraciones completas y un esquema mínimo de Auth/roles. Docker y Podman no están disponibles; queda pendiente comprobar una sesión Auth real y la actualización Realtime entre dos pestañas en la pila completa de Supabase local. No se sustituyen esas pruebas con movimientos en cuentas reales.
+La validación de la entrega anterior de ajustes pasó `typecheck`, `lint`, 304 pruebas en 34 archivos, `build`, `git diff --check` y cinco chequeos SQL (ajustes, consignaciones, QR/PSE, aislamiento bancario y correo/push). La migración se comprobó en una base **PostgreSQL 17.11 local desechable**, reconstruida con las 18 migraciones completas y un esquema mínimo de Auth/roles. Docker y Podman no están disponibles; queda pendiente comprobar una sesión Auth real y la actualización Realtime entre dos pestañas en la pila completa de Supabase local. No se sustituyen esas pruebas con movimientos en cuentas reales.
 
 La publicación aplica únicamente la migración pendiente del ajuste en Ordia (`dedtyhomynsmvatfnshs`), después de comparar versiones y nombres del historial y revisar el dry-run. El frontend se publica desde `master` mediante Vercel; su estado Ready y el SHA se verifican por separado. Esta entrega no cambia ni redespliega Edge Functions.
 
@@ -122,20 +122,21 @@ El selector permite flechas y Enter para elegir; Escape cierra primero el select
 
 Pasaron `typecheck`, `lint`, 218 pruebas en 28 archivos, `build` y `git diff --check`. Las pruebas de interfaz usan datos y servicios simulados para comprobar búsquedas, IDs al crear/editar, archivado, cambio de tipo, errores, foco, Escape y limpieza de listeners al cerrar y desmontar. Se revisó una vista local con fixtures a 390 × 430 y 1280 × 900: búsqueda y nombres largos legibles, desplazamiento interno y ausencia de desbordamiento horizontal. Reducir el viewport no reproduce un teclado real: Safari en un iPhone físico y el uso con categorías personales siguen pendientes. La entrega se publica mediante la integración Git de Vercel desde `master`; Ready y SHA se contrastan al finalizar. El selector en producción queda pendiente de comprobación con sesión autenticada; los fixtures visuales y capturas locales quedan excluidos de Git y del build.
 
-### Selección de cuentas y alcance de los filtros
+### Resumen independiente y movimientos
 
-- El selector permite consultar todas, una, varias o ninguna cuenta, incluidas cuentas archivadas para acceder a su historial.
-- **Todas** mantiene seleccionadas todas las cuentas disponibles, incluso si Realtime incorpora una nueva. **Limpiar** representa realmente ninguna selección: saldos, totales y movimientos quedan en cero o vacíos, sin sustituir silenciosamente por todas.
-- **Saldo total** suma el saldo actual de las cuentas seleccionadas. No se limita por fecha o tipo porque representa el saldo vigente.
-- **Ingresos y gastos del período** respetan las cuentas, fechas y tipo seleccionados. Sin fechas personalizadas se usa el mes actual en `America/Bogota`.
-- La lista de movimientos combina selección de cuentas, tipo, límites de fecha y el filtro múltiple **Categorías**. Los estados vacíos distinguen entre ningún resultado y ninguna cuenta seleccionada.
-- Una transferencia se guarda en una sola fila y aparece una sola vez cuando está seleccionado su origen, su destino o ambos. Afecta los saldos de ambas cuentas, pero nunca los totales de ingresos, gastos ni la agrupación por categoría.
-- **Filtro múltiple de categorías y subcategorías (`Finanzas → Movimientos`)**:
-  - Permite elegir **Todas las categorías** (valor inicial) o marcar múltiples categorías y subcategorías con búsqueda normalizada sin tildes ni distinción de mayúsculas (`CategoryMultiFilter`), manteniendo intacto el selector de selección única `CategoryPicker` en todos los formularios de creación y edición.
-  - Seleccionar una categoría principal incluye tanto los movimientos registrados directamente en ella como los de sus subcategorías (`Servicios` incluye `Servicios → Telefonía`). Seleccionar únicamente una subcategoría muestra solo sus movimientos.
-  - Presenta siempre la ruta completa (`Padre → Subcategoría`), distingue colisiones de nombre entre tipos (`· Ingreso` / `· Gasto`), filtra por `category_id` e incluye categorías archivadas cuando el usuario tiene movimientos históricos asociados (`Archivada`).
-  - Se combina con cuentas, tipo y fechas (`AND` entre filtros distintos, `OR` entre categorías seleccionadas sin duplicar filas cuando se marcan padre e hija). Con **Todas las categorías** se incluyen transferencias según los demás filtros; al filtrar por categorías concretas se excluyen transferencias. **Limpiar categorías** restablece **Todas las categorías** sin borrar cuentas, tipo ni fechas.
-  - Afecta **exclusivamente** al listado de `Movimientos` registrados: no altera saldos de cuentas, tarjetas de ingresos/gastos del período, desglose de gastos por categoría, `Sugerencias financieras` ni la bandeja `Movimientos por revisar`. Muestra la cantidad de movimientos coincidentes, un estado vacío específico cuando ninguno coincide y chips individuales retirables en móvil, reutilizando los datos en memoria y Realtime sin migraciones adicionales.
+**Saldo total actual** suma el saldo vigente de todas las cuentas del usuario, incluidas las archivadas con su saldo conservado. Archivar no hace desaparecer fondos del total. Ningún filtro del listado ni el mes elegido convierte ese saldo en histórico. El selector **Mes del resumen** gobierna únicamente ingresos, gastos, diferencia y **Gastos del período por categoría** (situado antes del listado); por defecto usa el mes actual en Bogotá. Transferencias, saldos iniciales y ajustes quedan fuera del ingreso, gasto y diferencia. Las subcategorías se agrupan una sola vez bajo su categoría principal.
+
+**Sugerencias y análisis financiero** usa todas las cuentas y señala su alcance: flujo del mes del resumen, obligaciones a hoy y comparación de consumo de los días transcurridos del mes actual con los mismos días del anterior. Los filtros de Movimientos no cambian las sugerencias. La cobertura de pagos usa saldos actuales ajustados, no el flujo ni un supuesto saldo histórico.
+
+En **Movimientos**, cuentas, categorías, tipo y fechas son filtros exclusivos de la lista. Sin fechas explícitas, el período visible es el mes actual de `America/Bogota`; **Todo el historial** permite quitar ese límite. Una fecha personalizada se aplica exactamente, con un extremo abierto si se deja vacío el otro. Vaciar ambas fechas vuelve al mes actual. Al recuperar foco, visibilidad o pasar medianoche, la fecha de Bogotá se actualiza; un mes elegido expresamente para el resumen se conserva.
+
+Los controles, chips de alcance, cantidad, totales y filas están juntos. Hay AND entre filtros distintos y OR entre cuentas/categorías seleccionadas. Elegir un padre incluye sus subcategorías, sin duplicar filas al seleccionar también una hija. Las categorías concretas excluyen transferencias y ajustes porque no tienen categoría. Se distinguen «sin resultados» y «ninguna cuenta seleccionada». **Limpiar filtros** restablece todas las cuentas/categorías/tipos y el mes actual de la lista, conservando el mes del resumen.
+
+Los resultados totalizan ingresos, gastos y diferencia; las transferencias se muestran separadas como entrada desde una cuenta no seleccionada, salida hacia una no seleccionada o traslado interno entre dos seleccionadas, contado una sola vez. Los ajustes muestran aumentos y disminuciones aparte. Los totales usan todos los resultados, no solo una página visual. La carga de datos recorre todas las páginas de PostgREST, con orden estable, para conservar movimientos antiguos en saldos y comparaciones; un fallo en una página no publica un saldo parcial. El orden del historial es fecha, creación e identificador descendentes.
+
+### Importes COP en formularios
+
+Cuentas, ingresos, gastos, transferencias, ajustes, gastos fijos y pagos usan `CopAmountInput` / `CopAmountField`: muestran `1.000`, `25.000` y `1.250.000` mientras se escribe, con teclado numérico móvil. El estado conserva dígitos enteros y los cálculos monetarios usan `bigint`; los valores persistidos siguen limitados a 9.000.000.000.000 COP. Vacío no equivale a cero. El saldo inicial conserva «± Signo» y los ajustes su dirección. El pegado se valida antes de quitar puntos: `1.000,50`, `1,000` y formatos ambiguos se rechazan; no se redondean ni convierten centavos en pesos. Fechas, horas, duraciones, cuentas y tarjetas no usan este formato.
 
 ## Gastos fijos y pagos recurrentes
 
@@ -167,9 +168,17 @@ Estos criterios se mantienen para gastos pausados o dados de baja: sus obligacio
 
 Pagar una obligación crea un gasto financiero normal y vincula ambas filas en una sola RPC transaccional. El importe y la fecha reales pueden diferir de lo previsto. `payment_request_id`, el bloqueo del período y las restricciones únicas evitan pagos duplicados. Ese gasto aparece una sola vez en movimientos, saldos, filtros y reportes; desde la lista general se identifica como **Gasto fijo** y se dirige al flujo especializado. **Deshacer pago** elimina lógicamente el movimiento y devuelve la obligación a pendiente en la misma operación. No hay pagos parciales en esta etapa.
 
+### Pagar un gasto fijo desde un aviso bancario
+
+En la revisión de una compra o transferencia enviada, **Registrar pago de gasto fijo** permite buscar gasto y obligación concreta por nombre/período, con vencimiento e importe previsto. Solo aparecen obligaciones impagas y no canceladas del dueño. Se proponen la cuenta explícitamente conocida, el importe del aviso y su fecha; el usuario confirma cuenta, importe y fecha real, y elige categoría activa. El importe real debe coincidir exactamente con el aviso y puede diferir del previsto, como en el pago normal: paga una obligación completa, sin pagos parciales.
+
+`pay_fixed_expense_from_bank_notice` reutiliza el pago existente y el vínculo bancario dentro de una transacción PostgreSQL. Bloqueos, UUID de solicitud y validación de estado protegen doble toque, reintentos y sesiones simultáneas; un fallo del vínculo revierte también el gasto y el estado de la obligación. Un pago ya registrado se resuelve mediante **Ya lo registré** y se identifica con su obligación en la lista de coincidencias. Bancolombia y PSE pueden vincularse al mismo gasto por elección explícita; no se agrupan por importe o fecha. Los avisos de entrada no ofrecen este modo.
+
+**Deshacer pago** elimina lógicamente el gasto, devuelve la obligación a pendiente y reabre todos sus comprobantes vinculados en **Movimientos por revisar**, en la misma transacción. Conserva los datos originales y no vuelve a enviar el push que ya fue aceptado. Las transiciones directas desde `authenticated` siguen bloqueadas.
+
 ### Sugerencias y análisis financiero
 
-Ordia incorpora un motor determinista de reglas para ayudar a comprender gastos y anticipar pagos, sin servicios externos ni modelos de IA. Las observaciones son factuales y se derivan exclusivamente de los movimientos, categorías y obligaciones fijas registrados en las cuentas seleccionadas:
+Ordia incorpora un motor determinista de reglas para ayudar a comprender gastos y anticipar pagos, sin servicios externos ni modelos de IA. Las observaciones son factuales y se derivan exclusivamente de los movimientos, categorías y obligaciones fijas registrados en todas las cuentas, independientemente de los filtros del listado:
 
 1. **Resumen y comparaciones del período**:
    - Calcula ingresos, gastos y el flujo neto (`ingresos - gastos`), excluyendo transferencias entre cuentas y saldos iniciales, y respetando movimientos eliminados lógicamente (`deleted_at`).
@@ -193,7 +202,7 @@ Ordia incorpora un motor determinista de reglas para ayudar a comprender gastos 
 3. **Alcance y filtros**:
    - Respeta estrictamente la selección de cuentas: todas, un subconjunto, una sola cuenta o ninguna cuenta.
    - Cada tarjeta indica su alcance explícito (cuentas analizadas y fechas utilizadas).
-   - Cuando no hay cuentas seleccionadas, muestra un estado vacío claro y comprensible solicitando seleccionar al menos una cuenta para generar el análisis.
+   - Cuando el usuario aún no tiene cuentas, muestra un estado vacío solicitando crear una cuenta; quitar cuentas del listado no desactiva el análisis.
    - El acceso es directo desde el resumen mediante el enlace de navegación «Ver sugerencias financieras ↓».
 
 ### Bandeja «Movimientos por revisar» (Bancolombia y PSE)
@@ -219,6 +228,7 @@ Ordia incorpora una bandeja privada de entrada para procesar avisos de Bancolomb
      - Entrada por transferencia: «Registrar ingreso» o «Transferencia entre mis cuentas».
      - Salida por transferencia: «Registrar gasto» o «Transferencia entre mis cuentas».
      - Compra: «Registrar gasto».
+     - Compra o salida compatible: «Registrar pago de gasto fijo».
      - En todos los casos: «Ya lo registré» y «Descartar».
    - «Ya lo registré»: valida tanto en interfaz como en el servidor propietario, movimiento vigente (`deleted_at IS NULL`), importe exacto, tipo, sentido y cuenta cuando se conozca (en transferencias propias, origen para salidas y destino para entradas). Si existen varias coincidencias válidas, presenta todas para que el usuario elija.
    - Transferencia entre cuentas propias: solicita la cuenta faltante y crea una sola fila en `financial_transactions`.
@@ -230,7 +240,7 @@ Ordia incorpora una bandeja privada de entrada para procesar avisos de Bancolomb
 
 4. **Prevención de duplicados, inmutabilidad y concurrencia**:
    - Cada acción genera un `client_request_id` único y las RPCs bloquean la fila del aviso con `FOR UPDATE`, garantizando que la creación del movimiento y la resolución del aviso ocurran en una sola operación atómica.
-   - `authenticated` solo posee privilegio `SELECT` sobre `bank_notifications`, `bank_card_account_links`, `bank_email_aliases` y `bank_push_notification_attempts` (con políticas RLS exclusivamente `FOR SELECT`); todas las escrituras se ejecutan mediante funciones en `private.*` expuestas por envoltorios `SECURITY INVOKER` en `public.*`, de modo que ni siquiera activando manualmente `ordia.bank_notification_flow` un cliente puede escribir directamente en las tablas. Además, el trigger `validate_bank_notification` prohíbe sobrescribir avisos ya resueltos o descartados, y si falla la creación del movimiento el aviso permanece en `pending`.
+   - `authenticated` solo posee privilegio `SELECT` sobre `bank_notifications`, `bank_card_account_links`, `bank_email_aliases` y `bank_push_notification_attempts` (con políticas RLS exclusivamente `FOR SELECT`); todas las escrituras se ejecutan mediante funciones en `private.*` expuestas por envoltorios `SECURITY INVOKER` en `public.*`, de modo que ni siquiera activando manualmente `ordia.bank_notification_flow` un cliente puede escribir directamente en las tablas. Además, el trigger `validate_bank_notification` prohíbe sobrescribir avisos ya resueltos o descartados, con la excepción controlada de reabrir los comprobantes de un pago fijo al deshacerlo, y si falla la creación del movimiento el aviso permanece en `pending`.
    - Si la migración aún no está instalada, la interfaz distingue explícitamente «Bandeja no disponible» de «Sin pendientes» y nunca muestra éxito cuando nada fue guardado.
    - Avisos coincidentes: si dos avisos presentan los mismos datos pero carecen de identificador bancario único, o coinciden en fecha e importe con un aviso ya pegado manualmente (pendiente o resuelto) o un movimiento ya registrado, Ordia señala la **`Posible coincidencia`** en la interfaz mediante un distintivo de advertencia sin descartar automáticamente operaciones legítimas.
    - El CUS evita otro pendiente PSE del mismo usuario y proveedor. Un aviso bancario y un comprobante PSE pueden vincularse manualmente al mismo gasto mediante «Ya lo registré»; igual importe y fecha solo sugieren una posible coincidencia.
@@ -259,7 +269,7 @@ Ordia incorpora una bandeja privada de entrada para procesar avisos de Bancolomb
 
 7. **Notificación Web Push inmediata e independiente al celular**:
    - Reutiliza `push_subscriptions` y el service worker añadiendo la preferencia independiente **«Avisarme de movimientos bancarios»** (`notify_bank_movements`), desacoplada de los recordatorios horarios de gastos fijos (`notify_fixed_expenses`). Desactivar avisos bancarios no desactiva los recordatorios de gastos fijos ni viceversa.
-   - `bank-email-webhook` envía la notificación de inmediato (sin esperar al cron horario) únicamente cuando se inserta un pendiente automático nuevo (`source_channel = 'gmail'`) y solo a los dispositivos activos de su propietario con `notify_bank_movements = true`, reservando cada intento en `bank_push_notification_attempts`. Si el envío push falla, el movimiento pendiente permanece intacto en la bandeja y los reintentos del proveedor no lo duplican.
+   - `bank-email-webhook` intenta enviar de inmediato las reservas creadas con un pendiente automático nuevo (`source_channel = gmail`). El servidor reserva únicamente los dispositivos habilitados de su dueño en la recepción; duplicados y cron solo recuperan esas reservas si fallaron o quedó un lease abandonado. No se notifica retroactivamente al activar un canal después.
    - Texto discreto en pantalla bloqueada: **`Ordia · Movimiento por revisar`** (sin importe, comercio ni cuenta). Al pulsarlo, `public/sw.js` abre `/?bandeja=bancaria#movimientos-por-revisar` (preservando `search + hash` tras iniciar sesión en `AuthRoutes`).
 
 8. **Aislamiento, pruebas locales y pasos para la primera prueba real**:
@@ -836,8 +846,8 @@ Usa dos correos reales distintos y dos ventanas o perfiles del navegador. No com
 11. Cierra A e inicia B en la misma ventana; verifica que la interfaz borre inmediatamente toda la información anterior.
 12. Como A, crea una categoría principal y una subcategoría, registra un gasto con la subcategoría y comprueba que se presente como `Principal > Subcategoría`.
 13. Renombra la categoría principal y confirma que el movimiento anterior muestre el nuevo nombre sin perder su asociación. Archívala y confirma que también se archive la subcategoría, que ambas desaparezcan de movimientos nuevos y que el movimiento histórico siga editable.
-14. Prueba **Todas**, una cuenta, varias y **Limpiar**. Confirma que ninguna selección produzca saldo y lista vacíos; que las cuentas archivadas puedan seleccionarse; y que una transferencia aparezca una sola vez al seleccionar origen, destino o ambos.
-15. Combina cuentas con tipo y fechas. Confirma que el saldo total siga siendo el saldo actual de las cuentas seleccionadas, mientras ingresos, gastos, agrupación y lista respetan el período y el tipo indicados.
+14. Prueba **Todas**, una cuenta, varias y **Limpiar** en Movimientos. Ninguna selección debe vaciar solo los resultados y sus totales; el resumen conserva todas las cuentas. Las cuentas archivadas pueden filtrarse y una transferencia aparece una sola vez al elegir origen, destino o ambos.
+15. Combina cuentas, categorías, tipo y fechas. Solo deben cambiar el listado y sus totales. El saldo total actual, el mes independiente del resumen, sus ingresos/gastos/diferencia y su agrupación por categoría permanecen iguales. Cambiar el mes del resumen tampoco cambia las fechas del listado.
 16. Abre **Gastos fijos**, crea uno mensual con vencimiento el 31 y otro anual con fecha base 29 de febrero. Confirma los ajustes de fin de mes y que los pendientes no cambien el saldo ni los gastos del resumen.
 17. Edita importe, categoría o cuenta desde una fecha futura. Confirma que pagos y vencimientos anteriores conserven sus datos y que el cambio aparezca únicamente desde la fecha efectiva.
 18. Pausa un gasto con obligaciones vencidas y próximas: las vencidas deben seguir disponibles y las próximas desaparecer. Reactívalo indicando el siguiente vencimiento y confirma que el intervalo pausado no genere cobros.
@@ -908,3 +918,56 @@ supabase/
 - El backend Web Push, sus secretos y Cron están configurados en Ordia. La entrega sigue sin comprobarse hasta registrar un dispositivo y recibir un aviso real. El usuario confirmó tareas/checklist y conexión/consulta real de iCloud y Google; esta etapa publica su frontend mediante GitHub y Vercel. Se mantienen pendientes OAuth iniciado desde el dominio publicado, la sesión en iPhone y las comprobaciones avanzadas entre usuarios/dispositivos descritas arriba. Incluye sugerencias financieras y de horarios mediante reglas deterministas. No se implementaron Notion, escritura en calendarios, recurrencia/notificaciones de tareas, conversión de monedas ni conexión bancaria.
 
 El proyecto se desarrolla por etapas. No se debe comenzar la etapa siguiente hasta solicitarla expresamente.
+
+
+## Siete mejoras financieras — publicación del 18 de noviembre de 2026
+
+Migraciones aplicadas exclusivamente en **Ordia / `dedtyhomynsmvatfnshs`**, en orden y una sola vez (no se cambiaron las 18 anteriores):
+
+- `20261118130808_connect_bank_notices_to_fixed_payments.sql`: pago atómico desde avisos y reapertura consistente al deshacer.
+- `20261118130809_recover_bank_push_and_record_diagnostics.sql`: cola de push al recibir, recuperación, diagnóstico privado y generación de obligaciones desde el cron.
+
+### Qué notifica y qué se diagnosticó
+
+Solo están implementados los canales **gastos fijos** y **avisos bancarios automáticos**. Gastos fijos: día anterior, vencimiento y vencidos, diariamente entre 08:00 y 20:00 Bogotá, sobre obligaciones impagas/no canceladas. El cron existente es horario (`0 * * * *`); no requiere mantener la web abierta. Ahora renueva también el horizonte de obligaciones para los dueños con ese canal habilitado, evitando que expire por no abrir Ordia. Tareas, agenda, sugerencias, pegado manual, confirmaciones de Gmail y ajustes no incorporan nuevos push.
+
+Los avisos automáticos soportados siguen siendo compras con débito, transferencias recibidas/enviadas, QR, PSE aprobado y consignaciones por corresponsal. El recorrido conserva firma Svix, destinatario privado y autenticación bancaria fiable antes del parser compartido. El remitente exacto PSE y las validaciones Bancolombia/ACH no se relajaron. Recibir, rechazar o fallar un push no registra movimientos ni cambia saldos.
+
+La inspección de producción fue de solo lectura, tras confirmar **Ordia / `dedtyhomynsmvatfnshs`**: cron horario activo, 168 ejecuciones con estado `succeeded` en siete días y seis respuestas HTTP recientes 200 sin timeout. En los últimos 30 días había 11 intentos bancarios y siete de gastos fijos marcados `sent`, sin filas `failed`/`invalid` en esa muestra. Existen preferencias distintas por dispositivo/canal y un dispositivo desactivado por el usuario. Se observaron avisos Gmail de compras, entradas y consignaciones; esa muestra no prueba recepción real de todos los formatos. `sent`, HTTP 200 y cron `succeeded` no demuestran entrega en iPhone ni visibilidad de una notificación.
+
+Causas y límites confirmados en el código anterior: un correo duplicado salía antes de recuperar un push fallido; un error antes de reservar no tenía cola recuperable; el horizonte de gastos fijos se renovaba al abrir la app; los correos rechazados antes de crear un pendiente no tenían trazabilidad persistente. Las correcciones están incluidas en las funciones publicadas, pero no son una explicación probada para cada aviso que el usuario no vio. Los registros de producción disponibles no permiten atribuir todas las ausencias al proveedor, al teléfono o al filtro Gmail.
+
+### Recuperación, privacidad y límites
+
+La inserción de una entrega bancaria verificada reserva en SQL los dispositivos activos que tenían **avisos bancarios habilitados en ese momento**. Activar después un canal/dispositivo no notifica pendientes antiguos. Webhook y cron comparten la cola: hasta tres intentos dentro de 24 horas, pausa mínima de un minuto tras fallo transitorio y recuperación de leases abandonados de 20 minutos. Se recuperan errores de red/configuración, 429 y 5xx; 404/410 invalidan la suscripción. El cron horario implica recuperación diferida, no inmediata. Se revalidan dueño, preferencia, suscripción y pendiente antes del envío. No se reenvían reservas `sent`, ni avisos resueltos/descartados. El cierre de sesión desactiva el dispositivo actual y cancela su suscripción local; una preferencia bancaria no modifica la de gastos fijos.
+
+No se puede garantizar entrega exactamente una vez: el proveedor podría aceptar el push y perderse la confirmación en base. El lease limita duplicados y el `tag` estable permite reemplazar la notificación del mismo intento. El pendiente financiero y su deduplicación no dependen del éxito push. Los payloads y pantalla bloqueada no contienen importes, cuentas ni comercios; abrir dirige a la bandeja o a gastos fijos.
+
+`private.bank_email_diagnostics`, solo accesible al servidor, registra hash opaco de entrega, dueño si se conoce, etapa, código permitido, contador y fechas. No admite texto libre, cuerpos, remitentes, tokens ni endpoints. Depura observaciones de más de 30 días al registrar la siguiente. Los logs previos a reconocer destinatario contienen únicamente etapa/código. Consultando estos códigos se distinguen autenticación rechazada, contenido no reconocido, duplicado, alias inactivo, ausencia de dispositivos habilitados, fallo de envío y aceptación del proveedor. **No recibido** significa ausencia de evidencia de llegada al webhook; debe contrastarse con el filtro y el proveedor de correo, no inferirse de la ausencia de push. Los diagnósticos nuevos comienzan con esta publicación; no reconstruyen correos anteriores.
+
+### Comprobaciones y pendientes
+
+Pasaron `typecheck`, `lint`, 327 pruebas en 39 archivos, `build`, `git diff --check` y `deno check` de ambas funciones Edge modificadas. Las pruebas usan datos sintéticos. Incluyen resumen/listado independientes, cambio de mes, fechas Bogotá, totales de múltiples cuentas y categorías, todas las páginas, importes/cursor/pegado, pago atómico, reintento, rollback, reversión, RLS y recuperación push. Realtime y cambio de sesión se verifican con eventos simulados en pruebas de componentes; no equivalen a dos sesiones Auth reales.
+
+Chequeos SQL nuevos (cada uno con `ROLLBACK`) y carrera real local:
+
+```powershell
+pnpm exec supabase db query --local --file supabase/checks/bank_fixed_payments.sql
+pnpm exec supabase db query --local --file supabase/checks/bank_push_recovery.sql
+pnpm exec supabase db query --local --file supabase/checks/fixed_reminder_generation.sql
+# El script rechaza hosts remotos y usa una base desechable identificada como local/test.
+$env:ORDIA_LOCAL_TEST_DB_URL = 'postgresql://postgres@127.0.0.1:55442/ordia_seven_final_test'
+node scripts/check-bank-fixed-payment-concurrency.mjs
+```
+
+Se repitieron los ocho chequeos SQL y las dos carreras de concurrencia sobre PostgreSQL 17.11 local, con las 20 migraciones contrastadas por versión, nombre y SHA256, Auth mínimo y roles de prueba. Docker/Podman siguen ausentes: queda pendiente Supabase local completo con Auth real y Realtime entre dos pestañas. El lint local de funciones no está disponible en este binario portátil por falta de `plpgsql_check`; el lint de producción terminó sin errores y conservó exactamente tres advertencias anteriores, en `finish_icloud_operation`, `finish_google_operation` y `schedule_personal_task`, sin advertencias nuevas de esta entrega. Se revisaron visualmente el resumen de escritorio a 1280 × 900 y filtros/pago fijo a 390 × 844, sin desbordamiento horizontal móvil. Esa revisión de viewport no prueba teclado físico de iPhone. No se crearon movimientos, obligaciones ni usuarios de prueba en producción ni se invocaron envíos de prueba.
+
+### Estado de publicación y compatibilidad
+
+El historial remoto quedó sincronizado con las 20 versiones del repositorio y el dry-run posterior no propone migraciones. Se verificaron las RPC, sus privilegios y RLS. Las firmas existentes se conservan: el frontend anterior y el webhook anterior siguen siendo compatibles con el esquema nuevo. La reserva SQL se crea antes de que el webhook reclame el envío. Las funciones nuevas se desplegaron después de las migraciones y el frontend se publica al final mediante push normal a `master` e integración Git de Vercel; el SHA y el estado Ready se informan al verificar ese despliegue.
+
+Se desplegaron únicamente **`bank-email-webhook` v4** y **`send-push-reminders` v9**, ambas ACTIVE. Los nueve archivos recuperados del despliegue coinciden con los locales, normalizando saltos de línea. Se comprobaron 401 ante webhook sin firma y cron sin secreto; esas respuestas no prueban recepción bancaria ni push en un teléfono. Las funciones de calendarios no se redesplegaron. Se conservaron secretos, VAPID, Vault y configuración.
+
+El cron existente **`ordia-push-reminders-hourly`**, activo con `0 * * * *`, conserva su destino Ordia y no se creó otro job. Al activar la recuperación se comprobaron **cero reservas bancarias antiguas elegibles**: las 11 existentes estaban `sent`. En adelante solo se recuperan reservas de menos de 24 horas, con pendiente todavía abierto, dispositivo/canal habilitado y menos de tres intentos, hasta 100 candidatos por ejecución. No hay backfill de dispositivos ni avisos anteriores; los `sent` no se reenvían deliberadamente. El cron puede generar obligaciones legítimas y enviar recordatorios normales sin abrir la aplicación.
+
+La verificación de producción no altera datos personales para demostrar los flujos. La navegación privada requiere una sesión autorizada; Auth/Realtime real en dos sesiones y la recepción del próximo correo y su notificación en iPhone se comprueban por separado con el usuario.
