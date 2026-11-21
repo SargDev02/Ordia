@@ -4,7 +4,8 @@ import { useAuth } from '../auth/useAuth'
 import type { RealtimeStatus } from '../finance/finance-context'
 import { BrandMark } from './BrandMark'
 
-export function FinanceHeader({ realtimeStatus }: { realtimeStatus: RealtimeStatus }) {
+// realtimeStatus solo se pasa en las vistas de finanzas, que escuchan avisos bancarios en vivo.
+export function FinanceHeader({ realtimeStatus }: { realtimeStatus?: RealtimeStatus }) {
   const { session, signOut } = useAuth()
   const location = useLocation()
   const [isSigningOut, setIsSigningOut] = useState(false)
@@ -31,7 +32,7 @@ export function FinanceHeader({ realtimeStatus }: { realtimeStatus: RealtimeStat
             <Link className={`rounded-lg px-4 py-2 text-sm font-semibold ${location.pathname === '/tareas' ? 'bg-white text-[#173f31] shadow-sm' : 'text-[#557064]'}`} to="/tareas">Tareas</Link>
             <Link className={`rounded-lg px-4 py-2 text-sm font-semibold ${location.pathname === '/calendario' ? 'bg-white text-[#173f31] shadow-sm' : 'text-[#557064]'}`} to="/calendario">Calendario</Link>
           </nav>
-          <div className="flex items-center gap-2 text-xs text-[#66796f]"><span className={`size-2 rounded-full ${realtimeStatus === 'connected' ? 'bg-[#54a675]' : realtimeStatus === 'connecting' ? 'bg-[#d5a747]' : 'bg-[#b66256]'}`} /><span>{realtimeStatus === 'connected' ? 'Sincronización activa' : realtimeStatus === 'connecting' ? 'Conectando…' : 'Sin conexión en tiempo real'}</span></div>
+          {realtimeStatus && <div className="flex items-center gap-2 text-xs text-[#66796f]"><span className={`size-2 rounded-full ${realtimeStatus === 'connected' ? 'bg-[#54a675]' : realtimeStatus === 'connecting' ? 'bg-[#d5a747]' : 'bg-[#b66256]'}`} /><span>{realtimeStatus === 'connected' ? 'Sincronización activa' : realtimeStatus === 'connecting' ? 'Conectando…' : 'Sin conexión en tiempo real'}</span></div>}
         </div>
       </div>
     </header>

@@ -40,7 +40,6 @@ vi.mock('../calendar/useCalendarAgenda', () => ({
       error: '',
       ready: false,
       busy: '',
-      realtimeStatus: 'connected',
       run: vi.fn(),
       refresh: vi.fn(),
     },
@@ -53,14 +52,12 @@ vi.mock('../calendar/useCalendarAgenda', () => ({
       error: '',
       ready: false,
       busy: '',
-      realtimeStatus: 'connected',
       run: vi.fn(),
       refresh: vi.fn(),
     },
     events: [],
     loading: false,
     hasWindow: false,
-    realtimeStatus: 'connected',
   }),
 }))
 
@@ -85,7 +82,7 @@ function task(overrides: Partial<PersonalTask> = {}): PersonalTask {
 }
 
 function renderTasks(tasks: PersonalTask[] = [], home = false) {
-  const state: TasksState = { tasks, isLoading: false, error: '', realtimeStatus: 'connected', ...mocks }
+  const state: TasksState = { tasks, isLoading: false, error: '', ...mocks }
   return render(
     <MemoryRouter>
       <TasksContext.Provider value={state}>

@@ -57,7 +57,7 @@ export default function TasksPage() {
   }
 
   return <div className="min-h-screen bg-[#f4f7f1]">
-    <FinanceHeader realtimeStatus={tasks.realtimeStatus} />
+    <FinanceHeader />
     <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>

@@ -43,6 +43,10 @@ import type {
 } from '../types/finance'
 import { FinanceContext, type FinanceContextValue, type RealtimeStatus } from './finance-context'
 
+const PREPARE_INTERVAL_MS = 6 * 60 * 60 * 1000
+// Se guarda fuera del componente para que navegar entre Inicio y Gastos fijos no repita la preparación.
+let lastPreparation: { userId: string; at: number } | null = null
+
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth()
   const userId = session?.user.id ?? ''
@@ -68,8 +72,14 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const sequence = ++loadSequence.current
     if (!userId) return
 
+    // Las funciones de preparación escriben en la base: se piden al abrir la sesión
+    // y luego como máximo cada PREPARE_INTERVAL_MS, no en cada foco o aviso.
+    const previous = lastPreparation
+    const prepare = !previous || previous.userId !== userId || Date.now() - previous.at > PREPARE_INTERVAL_MS
+
     try {
-      const data = await fetchFinanceData()
+      const data = await fetchFinanceData({ prepare })
+      if (prepare) lastPreparation = { userId, at: Date.now() }
       if (sequence !== loadSequence.current) return
       setLoadedUserId(userId)
       setAccounts(data.accounts)
@@ -109,32 +119,21 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     window.addEventListener('focus', refreshWhenVisible)
     window.addEventListener('online', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
+    // Realtime solo escucha los avisos bancarios: son lo único que crea el servidor
+    // (correo del banco) sin una acción del usuario en esta pestaña. Lo demás se
+    // recarga después de cada mutación y al volver a la pestaña (foco/visibilidad).
     const filter = `user_id=eq.${userId}`
+    let subscribedOnce = false
     const channel = activeClient
       .channel(`finance:${userId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'financial_accounts', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'financial_accounts', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'financial_categories', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'financial_categories', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'financial_transactions', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'financial_transactions', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fixed_expenses', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expenses', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fixed_expense_versions', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expense_versions', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'fixed_expense_periods', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'fixed_expense_periods', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bank_notifications', filter }, scheduleRefresh)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bank_notifications', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'bank_card_account_links', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bank_email_aliases', filter }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'bank_email_aliases', filter }, scheduleRefresh)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setRealtimeStatus('connected')
-          void refresh()
+          // La primera suscripción coincide con la carga inicial; solo se recarga al reconectar.
+          if (subscribedOnce) scheduleRefresh()
+          subscribedOnce = true
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           setRealtimeStatus('offline')
         }

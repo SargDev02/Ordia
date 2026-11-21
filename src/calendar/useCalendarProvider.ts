@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
-import { supabase } from '../services/supabase'
 import type { CalendarSnapshot } from '../types/calendar'
-import type { RealtimeStatus } from '../finance/finance-context'
 
 const empty: CalendarSnapshot = { connection: null, calendars: [], window: null, events: [] }
 
@@ -16,7 +14,6 @@ export function useCalendarProvider(provider: 'icloud' | 'google', startOn: stri
   const [ready, setReady] = useState<boolean | null>(null)
   const [settledWeek, setSettledWeek] = useState('')
   const [busy, setBusy] = useState('')
-  const [realtimeStatus, setRealtime] = useState<RealtimeStatus>('connecting')
   const active = useRef(false); const sequence = useRef(0); const operation = useRef(0); const busyRef = useRef('')
 
   const load = useCallback(async () => {
@@ -61,7 +58,6 @@ export function useCalendarProvider(provider: 'icloud' | 'google', startOn: stri
     // El efecto conecta y reinicia el estado de una ventana externa distinta.
     // oxlint-disable-next-line react-hooks/set-state-in-effect
     setBusy('')
-    let timer: ReturnType<typeof setTimeout>
     let lastAutomatic = 0
     async function automatic() {
       if (busyRef.current || Date.now() - lastAutomatic < 60000) return
@@ -76,26 +72,18 @@ export function useCalendarProvider(provider: 'icloud' | 'google', startOn: stri
       if (alive) { setReady(false); setError(caught instanceof Error ? caught.message : 'Servicio de calendario pendiente.') }
     })
     void automatic()
-    const schedule = () => { clearTimeout(timer); timer = setTimeout(() => void load(), 120) }
+    // Sin Realtime: la conexión solo cambia por acciones que esta pestaña espera (run → load)
+    // o por la redirección de OAuth, que vuelve a montar la página. Al volver se sincroniza (máx. 1/min).
     const visible = () => { if (document.visibilityState === 'visible') void automatic() }
-    const channel = supabase?.channel(`${provider}-cache:${userId}:${crypto.randomUUID()}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: `${provider}_connections`, filter: `user_id=eq.${userId}` }, schedule)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: `${provider}_connections`, filter: `user_id=eq.${userId}` }, schedule)
-      .subscribe((status) => {
-        if (!alive) return
-        if (status === 'SUBSCRIBED') { setRealtime('connected'); schedule() }
-        else if (['CLOSED', 'TIMED_OUT', 'CHANNEL_ERROR'].includes(status)) setRealtime('offline')
-      })
     window.addEventListener('focus', visible); window.addEventListener('online', visible); document.addEventListener('visibilitychange', visible)
     return () => {
-      alive = false; active.current = false; requests.current++; operations.current++; busyRef.current = ''; clearTimeout(timer)
-      if (channel) void supabase?.removeChannel(channel)
+      alive = false; active.current = false; requests.current++; operations.current++; busyRef.current = ''
       window.removeEventListener('focus', visible); window.removeEventListener('online', visible); document.removeEventListener('visibilitychange', visible)
     }
   }, [load, run, userId, provider, invoke])
 
   const own = stored?.owner === userId ? stored : null
   const snapshot = own?.week === startOn ? own.data : { ...empty, connection: own?.data.connection ?? null, calendars: own?.data.calendars ?? [] }
-  return { ...snapshot, error, ready, loading: settledWeek !== `${userId}:${startOn}`, busy, realtimeStatus, run,
+  return { ...snapshot, error, ready, loading: settledWeek !== `${userId}:${startOn}`, busy, run,
     refresh: () => run('sync', { force: true }) }
 }

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { supabase } from '../services/supabase'
 import { deleteTask, fetchTasks, saveTask, scheduleTaskWithCheck, setTaskCompleted } from '../services/tasks'
 import type { PersonalTask } from '../types/tasks'
-import type { RealtimeStatus } from '../finance/finance-context'
 import { TasksContext } from './tasks-context'
 
 // El contenedor de rutas usa key=userId: una nueva sesión recibe estado nuevo desde el primer render.
@@ -10,7 +8,6 @@ export function TasksProvider({ userId, children }: { userId: string; children: 
   const [tasks, setTasks] = useState<PersonalTask[]>([])
   const [isLoading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting')
   const sequence = useRef(0)
   const active = useRef(false)
 
@@ -30,20 +27,13 @@ export function TasksProvider({ userId, children }: { userId: string; children: 
 
   useEffect(() => {
     active.current = true
-    // Carga inicial desde el sistema externo; el resto de cambios llega por Realtime o reconexión.
+    // Carga inicial desde Supabase. Las tareas solo cambian por acciones del usuario, que ya
+    // recargan en mutate(); otros dispositivos se reflejan al volver a la pestaña o reconectar.
     // oxlint-disable-next-line react-hooks/set-state-in-effect
     void refresh()
     let timer: ReturnType<typeof setTimeout>
     const scheduleRefresh = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 120) }
     const onVisible = () => { if (document.visibilityState === 'visible') scheduleRefresh() }
-    const channel = supabase?.channel(`tasks:${userId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'personal_tasks', filter: `user_id=eq.${userId}` }, scheduleRefresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'personal_tasks', filter: `user_id=eq.${userId}` }, scheduleRefresh)
-      .subscribe((status) => {
-        if (!active.current) return
-        setRealtimeStatus(status === 'SUBSCRIBED' ? 'connected' : status === 'CHANNEL_ERROR' || status === 'CLOSED' || status === 'TIMED_OUT' ? 'offline' : 'connecting')
-        if (status === 'SUBSCRIBED') scheduleRefresh()
-      })
     window.addEventListener('online', scheduleRefresh)
     window.addEventListener('focus', scheduleRefresh)
     document.addEventListener('visibilitychange', onVisible)
@@ -51,7 +41,6 @@ export function TasksProvider({ userId, children }: { userId: string; children: 
       active.current = false
       sequence.current += 1
       clearTimeout(timer)
-      if (channel) void supabase?.removeChannel(channel)
       window.removeEventListener('online', scheduleRefresh)
       window.removeEventListener('focus', scheduleRefresh)
       document.removeEventListener('visibilitychange', onVisible)
@@ -68,7 +57,7 @@ export function TasksProvider({ userId, children }: { userId: string; children: 
     await refresh()
   }
 
-  return <TasksContext.Provider value={{ tasks, isLoading, error, realtimeStatus, refresh,
+  return <TasksContext.Provider value={{ tasks, isLoading, error, refresh,
     save: (input, requestId, id) => mutate(() => saveTask(input, requestId, id)),
     complete: (id, completed) => mutate(() => setTaskCompleted(id, completed)),
     remove: (id) => mutate(() => deleteTask(id)),

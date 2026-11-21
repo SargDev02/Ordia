@@ -26,13 +26,16 @@ function Consumer() {
 }
 beforeEach(() => { mocks.user = 'user-a'; mocks.events = []; mocks.fetch.mockReset().mockResolvedValue(data()) })
 
-it('un UPDATE Realtime del usuario refresca el saldo sin recargar la página (evento simulado)', async () => {
+it('un aviso bancario por Realtime refresca los datos sin recargar la página (evento simulado)', async () => {
   render(<FinanceProvider><Consumer /></FinanceProvider>)
   await waitFor(() => expect(screen.getByLabelText('Saldo')).toHaveTextContent('user-a: 50000'))
   expect(mocks.events.every(event => event.filter.filter === 'user_id=eq.user-a')).toBe(true)
+  expect(new Set(mocks.events.map(event => event.filter.table))).toEqual(new Set(['bank_notifications']))
+  expect(mocks.fetch).toHaveBeenNthCalledWith(1, { prepare: true })
   mocks.fetch.mockResolvedValue(data('user-a', 3000))
-  act(() => { mocks.events.find(event => event.filter.table === 'financial_transactions' && event.filter.event === 'UPDATE')!.callback() })
+  act(() => { mocks.events.find(event => event.filter.event === 'INSERT')!.callback() })
   await waitFor(() => expect(screen.getByLabelText('Saldo')).toHaveTextContent('user-a: 47000'))
+  expect(mocks.fetch).toHaveBeenLastCalledWith({ prepare: false })
 })
 
 it('al cambiar de usuario oculta los datos anteriores mientras llega la nueva respuesta', async () => {

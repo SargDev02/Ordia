@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { supabase } from '../services/supabase'
 import { fetchSchedulingPreferences, saveSchedulingPreferences } from '../services/tasks'
 import type { TaskSchedulingPreferences } from '../types/tasks'
 
@@ -43,27 +42,12 @@ export function useSchedulingPreferences(userId: string) {
       timer = setTimeout(() => void refresh(), 100)
     }
 
-    const channel = supabase?.channel(`task_scheduling_prefs:${userId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'task_scheduling_preferences',
-        filter: `user_id=eq.${userId}`,
-      }, scheduleRefresh)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'task_scheduling_preferences',
-        filter: `user_id=eq.${userId}`,
-      }, scheduleRefresh)
-      .subscribe()
-
+    // Las preferencias solo cambian cuando el usuario las guarda; basta con recargar al volver a la pestaña.
     window.addEventListener('focus', scheduleRefresh)
 
     return () => {
       active.current = false
       clearTimeout(timer)
-      if (channel) void supabase?.removeChannel(channel)
       window.removeEventListener('focus', scheduleRefresh)
     }
   }, [refresh, userId])

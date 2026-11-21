@@ -45,7 +45,7 @@ export default function CalendarPage() {
   async function refreshAll() {
     await Promise.allSettled(providers.filter((provider) => provider.connection?.status === 'connected' && !provider.busy && provider.calendars.some((source) => source.selected)).map((provider) => provider.refresh()))
   }
-  return <div className="min-h-screen bg-[#f4f7f1]"><FinanceHeader realtimeStatus={calendar.realtimeStatus} /><main className="mx-auto max-w-6xl px-5 py-10 sm:px-8">
+  return <div className="min-h-screen bg-[#f4f7f1]"><FinanceHeader /><main className="mx-auto max-w-6xl px-5 py-10 sm:px-8">
     <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#4f8068]">Tu tiempo</p><h1 className="mt-3 text-4xl font-semibold tracking-tight text-[#173f31]">Calendario</h1>
     <p className="mt-4 max-w-3xl text-sm leading-6 text-[#66796f]">Una agenda de iCloud y Google en America/Bogota. Cada proveedor conserva su conexión y selección. Los cambios externos aparecen después de sincronizar; aquí no se editan eventos ni se convierten en tareas.</p>
     {googleResult === 'connected' && calendar.google.connection?.status === 'connected' && <div className="mt-5"><AuthNotice tone="success">Google Calendar quedó conectado. Elige los calendarios que quieres mostrar.</AuthNotice></div>}

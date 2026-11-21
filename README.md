@@ -327,7 +327,7 @@ La navegación **Resumen / Gastos fijos / Tareas / Calendario** permite abrir `/
 Ordia incorpora un motor determinista de reglas para proponer horarios de trabajo a tareas pendientes, sin servicios externos ni modelos de IA:
 
 1. **Disponibilidad personal por usuario**:
-   - Configuración persistente en la tabla `task_scheduling_preferences`, sincronizada mediante Realtime y aislada con RLS.
+   - Configuración persistente en la tabla `task_scheduling_preferences`, aislada con RLS; se recarga al volver a la pestaña (sin Realtime).
    - Permite definir días de la semana (Lunes a Domingo) y múltiples franjas horarias por día (ej. mañana y tarde), validando que no se superpongan entre sí.
    - Margen entre compromisos (`buffer_minutes`, predeterminado 15 minutos).
    - Opción explícita para decidir si los eventos de todo el día bloquean la jornada completa (`all_day_blocks`, predeterminado activado).
@@ -375,7 +375,7 @@ Ordia incorpora un motor determinista de reglas para proponer horarios de trabaj
 
 RLS restringe SELECT, INSERT y UPDATE al propietario. Los privilegios por columna impiden asignar o cambiar `user_id`, identidad, fechas de auditoría o finalización desde el cliente. El trigger registra finalización y baja con hora del servidor y protege identidad y registros eliminados. No se otorga DELETE ni acceso de tabla a `anon`. `create_personal_task` usa `SECURITY INVOKER` y una clave de petición única por usuario: doble envío o reintento devuelve la misma tarea.
 
-`personal_tasks` pertenece a `supabase_realtime`. El contexto escucha INSERT y UPDATE filtrados por usuario, incluida la baja lógica, y vuelve a consultar al conectar/reconectar, al recuperar conexión, foco o visibilidad. El estado se monta con una clave de usuario distinta en cada sesión, invalida respuestas anteriores y libera el canal al salir. No necesita calendarios ni otra conexión externa. Esta estrategia sigue la documentación de [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes) y [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
+`personal_tasks` ya no pertenece a `supabase_realtime` (ver «Consumo en el plan gratuito»). El contexto recarga después de cada mutación y vuelve a consultar al recuperar conexión, foco o visibilidad, lo que también refleja la baja lógica hecha en otro dispositivo. El estado se monta con una clave de usuario distinta en cada sesión, invalida respuestas anteriores y libera el canal al salir. No necesita calendarios ni otra conexión externa. Esta estrategia sigue la documentación de [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes) y [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
 
 ### Verificaciones de tareas y planificación
 
@@ -462,7 +462,7 @@ El servidor obtiene por `calendar-query` el inventario completo del rango y sus 
 
 El commit de la ventana, eventos y recursos es transaccional, con una clave estable por calendario/UID/instancia. Una reserva por usuario evita operaciones simultáneas durante 90 segundos. Se limitan 5 intentos de conexión y 30 operaciones en 15 minutos, hasta 15 calendarios seleccionados, 300 recursos/4.000 instancias por ventana, 2 MB por respuesta y 8 MB de iCalendar total. La expansión también tiene un límite de iteraciones/tiempo; si se supera, se indica el error y se conserva la copia. Estos límites pueden requerir seleccionar menos calendarios en cuentas grandes.
 
-Al abrir o volver a la agenda se intenta actualizar, como máximo una vez por minuto por vista; la caché de servidor evita otra consulta dentro de 60 s (15 s al pulsar Actualizar). La fecha de última sincronización identifica la ventana visible. Un fallo mantiene visibles los datos válidos y señala que pueden estar desactualizados. No hay cron ni conexión WebSocket directa a Apple: **Realtime comunica cambios de la copia en Supabase** mediante INSERT/UPDATE del estado de conexión, filtrados por propietario. Los otros dispositivos vuelven a leer la copia tras el commit, incluidas eliminaciones; no se escuchan DELETE ni se publican credenciales. Se limpian canales/respuestas al salir o cambiar de sesión.
+Al abrir o volver a la agenda se intenta actualizar, como máximo una vez por minuto por vista; la caché de servidor evita otra consulta dentro de 60 s (15 s al pulsar Actualizar). La fecha de última sincronización identifica la ventana visible. Un fallo mantiene visibles los datos válidos y señala que pueden estar desactualizados. No hay cron ni conexión WebSocket directa a Apple, y la agenda ya no usa Realtime: cada acción espera su resultado y vuelve a leer la copia, y los otros dispositivos la leen al abrir o volver a la vista. No se publican credenciales. Se invalidan respuestas al salir o cambiar de sesión.
 
 “Actualizar lista de calendarios” repite el descubrimiento completo y conserva selección de los calendarios todavía accesibles; nuevos calendarios quedan sin seleccionar. Cambiar selección invalida las ventanas para que no sigan apareciendo eventos deseleccionados. Reconectar reemplaza credenciales y requiere volver a elegir calendarios.
 
@@ -541,13 +541,13 @@ Las migraciones **`20261028005021_add_google_calendar_readonly.sql`** y **`20261
 - `google_connections`, `google_calendars`, `google_windows` y `google_events` tienen RLS de propietario, solo `SELECT` para `authenticated` y ningún acceso para `anon`.
 - `private.google_credentials`, `google_remote_calendars`, `google_operations` y `google_oauth_states` tienen RLS con denegación por defecto y ningún permiso de cliente. Verifiers y tokens no se consultan desde el navegador.
 - Las diez RPC son `SECURITY INVOKER`, `search_path` vacío y ejecución exclusiva de servidor. La Edge Function comprueba `auth.getUser` antes de operar en nombre del usuario; las dos fases públicas OAuth dependen del state/origen/cookie, no de un propietario enviado por el navegador.
-- Realtime publica solo `google_connections`: INSERT/UPDATE filtrados por usuario disparan una nueva lectura de la copia, incluyendo eliminaciones. No se publican secretos ni se escuchan DELETE. Los canales y respuestas se invalidan al cambiar de usuario o salir; foco, conexión y visibilidad recuperan datos completos.
+- `google_connections` ya no se publica en Realtime. La autorización OAuth vuelve a montar la página y cada acción relee la copia; foco, conexión y visibilidad recuperan datos completos. No se publican secretos y las respuestas se invalidan al cambiar de usuario o salir.
 
 ### Consultas, recurrencias y límites
 
 Cada consulta Google obtiene una semana completa lunes–lunes en Bogotá. Usa `events.list` con `singleEvents=true` para que Google expanda recurrencias y excepciones, y descarta instancias `cancelled`. Recorre todas las páginas de calendarios y eventos, incluso páginas vacías con `nextPageToken`. Conserva ID de evento, serie, inicio original de instancia y objetos originales de inicio/fin; los instantes se guardan como `timestamptz`, y todo el día como fechas con fin exclusivo. Muestra los horarios en America/Bogota. No usa sync tokens incrementales porque la agenda consulta rangos: [restricciones de `events.list`](https://developers.google.com/workspace/calendar/api/v3/reference/events/list).
 
-Solo una respuesta completa válida sustituye atómicamente la ventana. Un error, permiso retirado, página incompleta o límite excedido conserva la copia anterior. **Actualizar lista de Google** vuelve a descubrir calendarios, conserva selección y copia de los que siguen accesibles y deja los nuevos sin seleccionar; únicamente retira los calendarios cuya ausencia confirma una lista completa, junto con sus eventos. La consulta posterior de eventos puede fallar sin borrar la copia restante. Cambiar selección o reconectar invalida ventanas para no presentar eventos de una selección anterior; reconectar requiere elegir calendarios otra vez. No hay cron ni webhook de Google: actualiza al abrir/volver, manualmente y a través de Realtime de la copia de Supabase.
+Solo una respuesta completa válida sustituye atómicamente la ventana. Un error, permiso retirado, página incompleta o límite excedido conserva la copia anterior. **Actualizar lista de Google** vuelve a descubrir calendarios, conserva selección y copia de los que siguen accesibles y deja los nuevos sin seleccionar; únicamente retira los calendarios cuya ausencia confirma una lista completa, junto con sus eventos. La consulta posterior de eventos puede fallar sin borrar la copia restante. Cambiar selección o reconectar invalida ventanas para no presentar eventos de una selección anterior; reconectar requiere elegir calendarios otra vez. No hay cron ni webhook de Google: actualiza al abrir/volver y manualmente.
 
 Límites por usuario/proveedor: 15 calendarios seleccionados, 100 descubiertos, 4.000 instancias por semana, 100 páginas como máximo y 4 MB por respuesta. Se guardan las 12 ventanas sincronizadas más recientemente. Una reserva de 90 s impide commits simultáneos; las solicitudes externas tienen 12 s por petición y 60 s por operación. Hay 30 operaciones y 5 inicios OAuth en 15 minutos. La caché evita otra consulta externa antes de 60 s, o 15 s en actualización manual. Si se supera un límite, seleccionar menos calendarios permite reintentar sin perder la copia.
 
@@ -840,7 +840,7 @@ Usa dos correos reales distintos y dos ventanas o perfiles del navegador. No com
 5. Edita el gasto a `$75.000`; el saldo total debe quedar en `$1.125.000`. Elimínalo y confirma que el saldo vuelva a `$1.200.000` y los gastos del mes a cero.
 6. Abre dos sesiones simultáneas de A. Crea o edita un movimiento desde una y confirma que la otra actualice movimientos, saldos y resumen sin recargar.
 7. Para comprobar un fallo atómico, deja abierto un formulario de transferencia en la primera sesión y archiva la cuenta de destino desde la segunda. Al enviar el formulario antiguo, debe mostrarse un error y ninguno de los dos saldos debe cambiar.
-8. Elimina una transferencia desde una sesión y confirma que en la otra desaparezca completa y ambos saldos se recalculen. Esto comprueba la eliminación lógica recibida como `UPDATE` de Realtime.
+8. Elimina una transferencia desde una sesión, vuelve a la otra pestaña y confirma que desaparezca completa y ambos saldos se recalculen. Esto comprueba la recarga al recuperar el foco.
 9. Desconecta y reconecta una sesión de A; confirma que recupere los datos completos, no solo eventos recibidos durante la conexión.
 10. Inicia sesión como B y verifica cuentas, movimientos y resúmenes vacíos. Crea datos de B y confirma que ninguna sesión de A los reciba o pueda consultarlos.
 11. Cierra A e inicia B en la misma ventana; verifica que la interfaz borre inmediatamente toda la información anterior.
@@ -914,7 +914,7 @@ supabase/
 
 - Supabase Auth administra contraseñas, sesiones y tokens; el frontend usa exclusivamente la clave pública.
 - Las rutas protegidas son una medida de interfaz. La privacidad real de las tablas está en RLS y en las validaciones de propiedad de la base de datos.
-- Las suscripciones Realtime se filtran por `user_id`, se liberan al cerrar o cambiar de sesión y vuelven a consultar el estado al conectar.
+- La única suscripción Realtime (avisos bancarios) se filtra por `user_id`, se libera al cerrar o cambiar de sesión y vuelve a consultar el estado al reconectar.
 - El backend Web Push, sus secretos y Cron están configurados en Ordia. La entrega sigue sin comprobarse hasta registrar un dispositivo y recibir un aviso real. El usuario confirmó tareas/checklist y conexión/consulta real de iCloud y Google; esta etapa publica su frontend mediante GitHub y Vercel. Se mantienen pendientes OAuth iniciado desde el dominio publicado, la sesión en iPhone y las comprobaciones avanzadas entre usuarios/dispositivos descritas arriba. Incluye sugerencias financieras y de horarios mediante reglas deterministas. No se implementaron Notion, escritura en calendarios, recurrencia/notificaciones de tareas, conversión de monedas ni conexión bancaria.
 
 El proyecto se desarrolla por etapas. No se debe comenzar la etapa siguiente hasta solicitarla expresamente.
@@ -971,3 +971,17 @@ Se desplegaron únicamente **`bank-email-webhook` v4** y **`send-push-reminders`
 El cron existente **`ordia-push-reminders-hourly`**, activo con `0 * * * *`, conserva su destino Ordia y no se creó otro job. Al activar la recuperación se comprobaron **cero reservas bancarias antiguas elegibles**: las 11 existentes estaban `sent`. En adelante solo se recuperan reservas de menos de 24 horas, con pendiente todavía abierto, dispositivo/canal habilitado y menos de tres intentos, hasta 100 candidatos por ejecución. No hay backfill de dispositivos ni avisos anteriores; los `sent` no se reenvían deliberadamente. El cron puede generar obligaciones legítimas y enviar recordatorios normales sin abrir la aplicación.
 
 La verificación de producción no altera datos personales para demostrar los flujos. La navegación privada requiere una sesión autorizada; Auth/Realtime real en dos sesiones y la recepción del próximo correo y su notificación en iPhone se comprueban por separado con el usuario.
+
+## Consumo en el plan gratuito
+
+Ordia está pensada para unos 10 usuarios en el plan gratuito de Supabase (instancia Nano, hasta 0,5 GB de RAM). El porcentaje de memoria del panel parte alto por diseño: Postgres reserva su caché (`shared_buffers`, unos 280 MB) y en la misma instancia corren Realtime, PostgREST, Auth, Storage y el pooler. Lo que indica presión real es la serie **Swap** o que **Memory commitment** se acerque a su límite.
+
+Para no sumar carga evitable:
+
+- **Realtime solo para avisos bancarios.** `supabase_realtime` publica únicamente `bank_notifications`, la única tabla que el servidor escribe sin una acción del usuario en la pestaña (correo reenviado del banco). `FinanceContext` abre un solo canal con INSERT/UPDATE filtrados por `user_id`. Tareas, preferencias de agenda y calendarios no abren canales.
+- **Recargas sin duplicar.** Cada mutación ya recarga sus datos; foco, visibilidad y reconexión recargan al volver a la pestaña. La primera suscripción del canal no repite la carga inicial.
+- **Preparación espaciada.** `ensure_default_financial_categories` y `generate_fixed_expense_periods` escriben en la base, así que `fetchFinanceData({ prepare })` solo las ejecuta al abrir la sesión y luego como máximo cada 6 horas. Crear, editar o reactivar un gasto fijo ya genera sus períodos, y `ordia-push-reminders-hourly` los genera cada hora.
+- **Historial de pg_cron acotado.** `ordia-prune-cron-history` borra cada domingo los registros de `cron.job_run_details` con más de 7 días.
+
+Migración: `20261121140812_reduce_realtime_and_prune_cron_history.sql`.
+

@@ -1,12 +1,10 @@
 import { createContext, useContext } from 'react'
 import type { PersonalTask, TaskInput } from '../types/tasks'
-import type { RealtimeStatus } from '../finance/finance-context'
 
 export interface TasksState {
   tasks: PersonalTask[]
   isLoading: boolean
   error: string
-  realtimeStatus: RealtimeStatus
   refresh: () => Promise<void>
   save: (input: TaskInput, requestId: string, id?: string) => Promise<void>
   complete: (id: string, completed: boolean) => Promise<void>

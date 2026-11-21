@@ -3,19 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useGoogleCalendar } from './useGoogleCalendar'
 import type { CalendarSnapshot } from '../types/calendar'
 
-const mocks = vi.hoisted(() => ({ owner: 'a', fetch: vi.fn(), invoke: vi.fn(), remove: vi.fn(), callbacks: [] as (() => void)[] }))
+const mocks = vi.hoisted(() => ({ owner: 'a', fetch: vi.fn(), invoke: vi.fn(), channel: vi.fn() }))
 vi.mock('../auth/useAuth', () => ({ useAuth: () => ({ session: { user: { id: mocks.owner } } }) }))
 vi.mock('../services/googleCalendar', () => ({ fetchGoogleSnapshot: mocks.fetch, invokeGoogleCalendar: mocks.invoke }))
-vi.mock('../services/supabase', () => ({ supabase: { channel: () => {
-  const channel = { on: (_event: string, _filter: unknown, callback: () => void) => { mocks.callbacks.push(callback); return channel }, subscribe: () => channel }; return channel
-}, removeChannel: mocks.remove } }))
+vi.mock('../services/supabase', () => ({ supabase: { channel: mocks.channel } }))
 const snapshot = (owner: string): CalendarSnapshot => ({ connection: { id: owner, user_id: owner, generation: 'g', status: 'connected', error_code: null, updated_at: '' },
   calendars: [{ id: `cal-${owner}`, user_id: owner, connection_id: owner, selected: true, name: owner, color: '#123456' }], window: null,
   events: [{ id: owner, user_id: owner, window_id: 'w', calendar_id: `cal-${owner}`, occurrence_key: owner, title: `Evento ${owner}`, description: '', location: '', url: null, all_day: true, start_on: '2026-10-27', end_on: '2026-10-28', starts_at: null, ends_at: null }] })
-beforeEach(() => { vi.clearAllMocks(); mocks.owner = 'a'; mocks.callbacks = []; mocks.invoke.mockResolvedValue({ configured: true }); mocks.fetch.mockImplementation(async (owner: string) => snapshot(owner)) })
+beforeEach(() => { vi.clearAllMocks(); mocks.owner = 'a'; mocks.invoke.mockResolvedValue({ configured: true }); mocks.fetch.mockImplementation(async (owner: string) => snapshot(owner)) })
 
 describe('estado de Google por sesión (mocks)', () => {
-  it('oculta A inmediatamente al cambiar a B y descarta respuestas y canales de A', async () => {
+  it('oculta A inmediatamente al cambiar a B y descarta respuestas de A sin abrir canales Realtime', async () => {
     const { result, rerender } = renderHook(() => useGoogleCalendar('2026-10-26'))
     await waitFor(() => expect(result.current.events[0]?.title).toBe('Evento a'))
     await waitFor(() => expect(result.current.busy).toBe(''))
@@ -29,7 +27,7 @@ describe('estado de Google por sesión (mocks)', () => {
     await waitFor(() => expect(result.current.events[0]?.title).toBe('Evento b'))
     await act(async () => { finish(snapshot('a')); await refresh })
     expect(result.current.events[0]?.title).toBe('Evento b')
-    expect(mocks.remove).toHaveBeenCalled()
+    expect(mocks.channel).not.toHaveBeenCalled()
   })
   it('ignora una sincronización antigua al desconectar y conserva solo el aviso de revocación pendiente', async () => {
     let finish!: (data: object) => void

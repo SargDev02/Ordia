@@ -11,13 +11,13 @@ vi.mock('../calendar/useIcloudCalendar', () => ({ useIcloudCalendar: () => ({
   connection: mocks.connected ? { id: 'c', generation: 'g', status: 'connected', error_code: null } : null,
   calendars: [{ id: 's', name: 'Personal', color: '#123456', selected: true }],
   events: mocks.connected ? [{ id: 'e', calendar_id: 's', title: '<script>Evento</script>', description: '<img src=x onerror=alert(1)>', location: 'Bogotá', url: 'javascript:alert(1)', all_day: true, start_on: '2026-10-27', end_on: '2026-10-28' }] : [],
-  window: { synced_at: '2026-10-27T14:00:00Z' }, loading: false, error: '', ready: true, busy: '', realtimeStatus: 'connected', run: mocks.run, refresh: mocks.refresh,
+  window: { synced_at: '2026-10-27T14:00:00Z' }, loading: false, error: '', ready: true, busy: '', run: mocks.run, refresh: mocks.refresh,
 }) }))
 vi.mock('../calendar/useGoogleCalendar', () => ({ useGoogleCalendar: () => ({
   connection: mocks.googleConnected ? { id: 'c', generation: 'g', status: 'connected', error_code: null } : null,
   calendars: mocks.googleConnected ? [{ id: 's', name: 'Trabajo', color: '#123456', selected: true }] : [],
   events: mocks.googleConnected ? [{ id: 'e', occurrence_key: 'one', calendar_id: 's', title: '<script>Evento</script>', description: '', location: '', url: null, all_day: true, start_on: '2026-10-27', end_on: '2026-10-28' }] : [],
-  window: mocks.googleConnected ? { synced_at: '2026-10-27T14:00:00Z' } : null, loading: false, error: mocks.googleError, ready: false, busy: '', realtimeStatus: 'connected', run: vi.fn(), refresh: vi.fn(),
+  window: mocks.googleConnected ? { synced_at: '2026-10-27T14:00:00Z' } : null, loading: false, error: mocks.googleError, ready: false, busy: '', run: vi.fn(), refresh: vi.fn(),
 }) }))
 beforeEach(() => { vi.clearAllMocks(); mocks.connected = true; mocks.googleConnected = false; mocks.googleError = ''; mocks.run.mockResolvedValue(undefined); mocks.refresh.mockResolvedValue(undefined); vi.stubGlobal('isSecureContext', true) })
 

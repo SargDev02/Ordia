@@ -40,12 +40,21 @@ export function isMissingBankInboxSchemaError(
   return combined.includes('does not exist') || combined.includes('schema cache')
 }
 
-export async function fetchFinanceData() {
+/**
+ * Carga todos los datos financieros del usuario.
+ * `prepare` crea las categorías por defecto y genera los períodos de gastos fijos.
+ * Esas dos funciones escriben en la base, así que solo se piden al abrir la sesión
+ * o cuando pasaron varias horas; las mutaciones de gastos fijos ya generan sus períodos
+ * y la tarea programada de recordatorios los genera cada hora.
+ */
+export async function fetchFinanceData({ prepare = true }: { prepare?: boolean } = {}) {
   const api = client()
-  const defaultsResult = await api.rpc('ensure_default_financial_categories')
-  if (defaultsResult.error) fail('No pudimos preparar tus categorías financieras.')
-  const generationResult = await api.rpc('generate_fixed_expense_periods', { p_horizon_months: 3 })
-  if (generationResult.error) fail('No pudimos actualizar los períodos de tus gastos fijos.')
+  if (prepare) {
+    const defaultsResult = await api.rpc('ensure_default_financial_categories')
+    if (defaultsResult.error) fail('No pudimos preparar tus categorías financieras.')
+    const generationResult = await api.rpc('generate_fixed_expense_periods', { p_horizon_months: 3 })
+    if (generationResult.error) fail('No pudimos actualizar los períodos de tus gastos fijos.')
+  }
 
   const [
     accountsResult,
